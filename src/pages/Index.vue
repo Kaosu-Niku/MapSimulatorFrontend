@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { ref } from 'vue';
 import Menu from '@/pages/Menu.vue';
-import Game from "@/pages/Game.vue"
+import Game from "@/pages/Game.vue";
+import MemberMenu from '@/pages/MemberMenu.vue';
 
 const game = ref();
 const handleChangeStage = (map: any) => {
@@ -16,6 +17,7 @@ const handleChangeStage = (map: any) => {
   <Game 
     ref="game"
   />
+  <MemberMenu />
 </div>
   
 </template>
