@@ -3,8 +3,8 @@
 
     <el-button 
       type="info" 
-      @click="memberMenuShow = true"
-      class="member-fixed-icon" 
+      @click="characterMenuShow = true"
+      class="character-fixed-icon" 
     >
       <el-icon >
         <View />
@@ -14,18 +14,18 @@
     <transition> 
 
     <div
-      class="member-menu"
-      v-show="memberMenuShow"
+      class="character-menu"
+      v-show="characterMenuShow"
     >
       <div class="icons">
-        <el-button type="info" @click="memberMenuShow = false">
+        <el-button type="info" @click="characterMenuShow = false">
           <el-icon >
             <Hide />
           </el-icon>
         </el-button>       
       </div>  
       
-      <MemberSelect />
+      <CharacterSelect />
     </div>
 
     </transition>
@@ -34,18 +34,17 @@
 
 <script lang="ts" setup>
 import { ref } from "vue";
-import MemberSelect from "./MemberSelect.vue"
+import CharacterSelect from "./CharacterSelect.vue"
 
-const emit = defineEmits<{
-  (e: 'changeStage', map: any): void
-}>()
+// const emit = defineEmits<{
+//   (e: 'changeStage', map: any): void
+// }>()
 
-const memberMenuShow = ref(true);
+const characterMenuShow = ref(true);
 </script>
 
 <style scoped lang="scss">
-.member-menu{
-  overflow: hidden;
+.character-menu{ 
   position: relative;
   z-index: 100;
   height: 100%;
@@ -65,7 +64,7 @@ const memberMenuShow = ref(true);
   }
 }
 
-.member-fixed-icon{
+.character-fixed-icon{
   top: 6px;
   right: 20px;
   z-index: 10;

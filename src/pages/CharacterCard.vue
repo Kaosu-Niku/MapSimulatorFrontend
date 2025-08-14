@@ -1,28 +1,28 @@
 <template>
-  <div class="member-card">
+  <div class="character-card">
     <div class="content">
-      <el-image class="head-image" :src="member.icon" fit="fill"
+      <el-image class="head-image" :src="characterCurrent.icon" fit="fill"
       @click="join" />
       <div class="name">
-        {{ member.name? member.name : "無" }}
+        {{ characterCurrent.name? characterCurrent.name : "無" }}
       </div>
       <div class="profession">
-        {{ member.profession? member.profession : "無" }}
+        {{ characterCurrent.profession? characterCurrent.profession : "無" }}
       </div>
       <div class="rarity">
-        <el-image class="rarity-image" v-for="n in member.rarity" :key="n"
+        <el-image class="rarity-image" v-for="n in characterCurrent.rarity" :key="n"
         :src="'https://www.citypng.com/public/uploads/preview/white-star-png-img-701751694532296t4i955smo5.png'" fit="fill"/>        
       </div>
       <div class="maxPhase">
         <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_0_large.png'" fit="fill"
         @click="change_currentPhase(0)" />
         <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_1_large.png'" fit="fill" 
-        @click="change_currentPhase(1)" v-if="member.maxPhase > 0"/>
+        @click="change_currentPhase(1)" v-if="characterCurrent.maxPhase > 0"/>
         <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_2_large.png'" fit="fill" 
-        @click="change_currentPhase(2)" v-if="member.maxPhase > 1"/>
+        @click="change_currentPhase(2)" v-if="characterCurrent.maxPhase > 1"/>
       </div>
       <div class="skillData">
-        <el-image class="skill-image" v-for="n in memberCurrent.skillData.icon" :key="n" :src="n" fit="fill"
+        <el-image class="skill-image" v-for="n in characterCurrent.skillData.icon" :key="n" :src="n" fit="fill"
         @click="change_currentSkill(n)"/>        
       </div>
     </div>
@@ -33,26 +33,26 @@
 <script lang="ts" setup>
 import { ref, watch, defineProps } from "vue";
 const props = defineProps({
-  member: {
+  character: {
     type: Object,
     required: true
   }
 });
 
 //使用深層複製來避免引用原數據而導致同步修改 (需注意此深層複製方式無法複製undefined、function())
-const originalMemberData = JSON.parse(JSON.stringify(props.member));
-const memberCurrent = ref(originalMemberData);
-memberCurrent.value.currentPhase = 0;
+const originalCharacterData = JSON.parse(JSON.stringify(props.character));
+const characterCurrent = ref(originalCharacterData);
+characterCurrent.value.currentPhase = 0;
 
 function change_currentPhase(i){
-  const originalSkillData = JSON.parse(JSON.stringify(props.member.skillData));
+  const originalSkillData = JSON.parse(JSON.stringify(props.character.skillData));
   //改變所選精英階段
-  memberCurrent.value.currentPhase = i;
+  characterCurrent.value.currentPhase = i;
   //(改變攻擊範圍、改變可選技能)
-  memberCurrent.value.skillData = JSON.parse(JSON.stringify(originalSkillData));
+  characterCurrent.value.skillData = JSON.parse(JSON.stringify(originalSkillData));
   //如果這是有三技能的幹員，且當前所選精英階段不是精2，就移除最後一個技能的資訊
-  if(memberCurrent.value.skillData.icon.length == 3 && i != 2){
-    memberCurrent.value.skillData.icon.pop();
+  if(characterCurrent.value.skillData.icon.length == 3 && i != 2){
+    characterCurrent.value.skillData.icon.pop();
   } 
 }
 
@@ -63,13 +63,13 @@ function change_currentSkill(i){
 
 function join(){
   //頭像被點擊的幹員加入部屬區
-  alert(memberCurrent);
+  alert(characterCurrent);
 }
 
 </script>
 
 <style lang="scss" scoped>
-.member-card{
+.character-card{
   display: flex;
   align-items: center;
   height: 100px;
