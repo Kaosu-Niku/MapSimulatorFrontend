@@ -1,8 +1,13 @@
 import Enemy from "../enemy/Enemy";
+import SpineEnemy from "../enemy/SpineEnemy";
 import Trap from "../game/Trap";
 
 const specialIdle = {
-  enemy_1536_ncrmcr: "Idle_b"       //boss领袖
+  enemy_1536_ncrmcr: "Idle_b",       //boss领袖
+}
+
+const specialMove = {
+
 }
 
 export const getAnimation = (key: string, animations: any, state: string) => {
@@ -23,17 +28,44 @@ export const getAnimation = (key: string, animations: any, state: string) => {
   return animation;
 }
 
+//修复一些spine错误
+export const checkAnimation = (key: string, animations: any) => {
+  if(key === "enemy_10118_ymgprc"){
+    animations.forEach(animation => {
+      switch (animation.name) {
+        case "Move":
+          animation.duration = 1.4;
+          break;
+        case "Idle":
+          animation.duration = 1.4;
+          break;
+      }
+    })
+  }
+}
+
 const getMoveAnimation = (key:string, animations: any) => {
+  const special = specialMove[key];
+  if(special) return special;
+
   const moveStates = ["Run_Loop","Move_Loop","Run","Move"];
 
   for(let i=0; i<moveStates.length; i++){
     const stateName = moveStates[i];
     const find = animations.find( (animation: any ) => {
-      return animation.name.includes(stateName);
+      return animation.name === stateName;
     })
       
     if(find){
       return find.name;
+    }
+
+    const fuzzyFind = animations.find( (animation: any ) => {
+      return animation.name.includes(stateName);
+    })
+
+    if(fuzzyFind){
+      return fuzzyFind.name;
     }
   }
 
@@ -50,11 +82,19 @@ const getIdleAnimation = (key:string, animations: any) => {
   for(let i=0; i<idleStates.length; i++){
     const stateName = idleStates[i];
     const find = animations.find( (animation: any ) => {
-      return animation.name.includes(stateName);
+      return animation.name === stateName;
     })
 
     if(find){
       return find.name;
+    }
+
+    const fuzzyFind = animations.find( (animation: any ) => {
+      return animation.name.includes(stateName);
+    })
+
+    if(fuzzyFind){
+      return fuzzyFind.name;
     }
   }
 
@@ -68,18 +108,26 @@ const getTrapIdleAnimation = (key:string, animations: any) => {
   for(let i=0; i<idleStates.length; i++){
     const stateName = idleStates[i];
     const find = animations.find( (animation: any ) => {
-      return animation.name.includes(stateName);
+      return animation.name === stateName;
     })
 
     if(find){
       return find.name;
+    }
+
+    const fuzzyFind = animations.find( (animation: any ) => {
+      return animation.name.includes(stateName);
+    })
+
+    if(fuzzyFind){
+      return fuzzyFind.name;
     }
   }
 
   return;
 }
 
-export const getSkelOffset = (enemy:Enemy): Vec2 => {
+export const getSkelOffset = (enemy:SpineEnemy): Vec2 => {
   const offset = {
     x: 0,
     y: 0

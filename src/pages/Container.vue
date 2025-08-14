@@ -1,7 +1,11 @@
 <template>
-  <div class="container">
+  <div 
+    class="container"
+    @click="handleContainerClick"
+  >
     <el-popover
       v-for = "(label, index) in enemyLabels"
+      :disabled= "!showEnemyMenu"
       :key = "index"
       placement="top"
       :title="label.name + '#' + (label.id + 1)"
@@ -13,12 +17,12 @@
           :style = "label.style"
           v-show="label.visible"
           class="label"
-          @click="handleLabelClick(index)"
+          @click.stop="handleLabelClick(label)"
         >
           <div  
             class="countdown"
             v-if="!label.unMoveable"
-            v-show="label.options.countDownVisible && label.countDown > -1"
+            v-show="label.options.CountDownVisible && label.countDown > -1"
             :class="{
               'big': label.countDown >= 1000,
               'middle': label.countDown >= 100 && label.countDown < 1000,
@@ -30,7 +34,7 @@
 
           <div  
             class="countdown end-countdown"
-            v-show="label.options.countDownVisible && label.endCountDown > -1"
+            v-show="label.options.CountDownVisible && label.endCountDown > -1"
             :class="{
               'big': label.endCountDown >= 1000,
               'middle': label.endCountDown >= 100 && label.endCountDown < 1000,
@@ -46,14 +50,53 @@
       <div>
         <span class="enemy-key">{{ label.key }}</span>
         <span class="enemy-key">{{ `当前检查点：${label.currentCheckPoint + 1} / ${label.checkPointLength}` }}</span>
-        <el-button @click="showDetail(label.id)">查看数据</el-button>
+        <el-button @click="showDetail(label.id)">查看详情</el-button>
         <el-checkbox 
           :disabled="!enemies[index].isRanged()" 
-          v-model="label.options.attackRangeVisible" label="显示攻击范围" 
+          v-model="label.options.AttackRangeVisible" label="显示攻击范围" 
           @change = "handleAttackRangeCheck"
         />
         <el-checkbox 
-          v-model="label.options.countDownVisible" label="显示等待时间"
+          v-model="label.options.CountDownVisible" label="显示等待时间"
+          @change = "handleCountDownCheck"
+        />
+      </div>
+    </el-popover>
+    
+    <el-popover
+      v-for = "(label, index) in trapLabels"
+      :disabled= "!showEnemyMenu"
+      :key = "index"
+      placement="top"
+      :title="'装置id:' + label.alias"
+      :width="200"
+      trigger="click"
+    >
+      <template #reference>
+        <div 
+          :style = "label.style"
+          v-show="label.visible"
+          class="label trap-label"
+          @click.stop="pauseGame()"
+        >
+          <div  
+            class="countdown"
+            v-show="label.options.CountDownVisible && label.countDown > -1"
+            :class="{
+              'big': label.countDown >= 1000,
+              'middle': label.countDown >= 100 && label.countDown < 1000,
+              'small': label.countDown < 100,
+            }"
+            
+          >{{ label.countDown > -1 ? label.countDown : "" }}
+          </div>
+
+        </div>
+      </template>
+
+      <div>
+        <el-checkbox 
+          v-model="label.options.CountDownVisible" label="显示倒计时"
           @change = "handleCountDownCheck"
         />
       </div>
@@ -86,41 +129,59 @@ import GameConfig from '@/components/utilities/GameConfig';
 import exitImg from '@/assets/images/escape.png'
 import Trap from '@/components/game/Trap';
 import TrapManager from '@/components/game/TrapManager';
+import eventBus from '@/components/utilities/EventBus';
+import GameView from '@/components/game/GameView';
+
+const { gameManager, attackRangeCheckAll, countDownCheckAll, showEnemyMenu } = defineProps(
+  ["gameManager","attackRangeCheckAll", "countDownCheckAll", "showEnemyMenu"]
+);
 
 const emit = defineEmits(["pause","update:attackRangeIndet","update:countDownIndet"]);
 const enemyLabels = ref([]);
 
-let gameManager: GameManager;
 let waveManager: WaveManager;
 let trapManager: TrapManager;
+let gameView: GameView;
 let enemies: Enemy[];
 let scale: number;
+let canvasHeight: number;
+let canvasWidth: number;
 
 //#region  敌人label数据绑定                         
-const updateLabelVisible = () => {
+const initEnemyLabels = () => {
+  enemies.forEach(enemy => {
+    enemyLabels.value.push({
+      id: enemy.id,
+      key: enemy.key,
+      name: enemy.name,
+      checkPointLength: enemy.checkpoints.length,
+      options: enemy.options,
+      style: {}
+    });
+    
+  })
+}
+
+
+const updateEnemyVisible = () => {
   enemies.forEach(enemy => {
     const label = enemyLabels.value[enemy.id];
     label.visible = enemy.visible();
   });
 }
 
-const updateLabelPosAndSize = () => {
+const updateEnemyPosAndSize = () => {
 
-  scale =  gameCanvas.canvas.clientHeight / GameConfig.TILE_SIZE * 0.012;
+  scale =  canvasHeight / GameConfig.OBJECT_SCALE;
 
-  waveManager.getEnemiesInMap().forEach(enemy => {
-    if(!enemy.spine) return;
-    const {skelSize, skelOffset} = enemy;
+  waveManager.enemiesInMap.forEach(enemy => {
+    if(!enemy.object) return;
+    const {meshSize, meshOffset} = enemy;
     
-    const height = skelSize.y * 5.5;
-    const width = skelSize.x * 5.5;
+    const height = meshSize.y * (enemy['fbxMesh']? 1 : 5.5);
+    const width = meshSize.x * (enemy['fbxMesh']? 1 : 5.5);
 
-    const tempV = new THREE.Vector3();
-    enemy.skeletonMesh.getWorldPosition(tempV);
-    //将 3D 世界坐标投影到相机的 2D 屏幕空间
-    tempV.project(gameCanvas.camera);
-    const x = (tempV.x *  .5 + .5) * gameCanvas.canvas.clientWidth;
-    const y = (tempV.y * -.5 + .5) * gameCanvas.canvas.clientHeight;
+    const {x, y} = gameView.localToWorld(enemy.object.position);
 
     const label = enemyLabels.value[enemy.id];
 
@@ -128,16 +189,16 @@ const updateLabelPosAndSize = () => {
       height: height + 'px',
       width: width + 'px',
       left: x - width / 2 + 'px', 
-      top: y - height / 2 + scale * skelOffset.y + 'px',
+      top: y - height / 2 + scale * meshOffset.y + 'px',
       transform: `scale(${scale})`
     }
 
   })
 }
 
-const updateDatas = () => {
-  waveManager.getEnemiesInMap().forEach(enemy => {
-    if(!enemy.spine) return;
+const updateEnemyDatas = () => {
+  waveManager.enemiesInMap.forEach(enemy => {
+    if(!enemy.object) return;
     const label = enemyLabels.value[enemy.id];
     label.currentCheckPoint = enemy.checkPointIndex;
 
@@ -160,47 +221,24 @@ const updateDatas = () => {
   })
 }
 
-
-
-const initEnemyLabels = () => {
-  enemies.forEach(enemy => {
-    enemyLabels.value.push({
-      id: enemy.id,
-      key: enemy.key,
-      name: enemy.name,
-      checkPointLength: enemy.checkpoints.length,
-      options: enemy.options,
-      style: {}
-    });
-    
-  })
-}
-
-
-const changeGameManager = (_gameManager: GameManager) => {
-  if(_gameManager){
-    gameManager = _gameManager;
-    waveManager = gameManager.waveManager;
-    trapManager = gameManager.trapManager;
-    enemies = waveManager.enemies;
-
-    initEnemyLabels();
-  }else{
-    gameManager = null;
-    waveManager = null;
-    enemies = [];
-    enemyLabels.value = [];
-  }
-}
 //#endregion
 
 
 //#region  与弹出框的交互                            
 
-const {attackRangeCheckAll, countDownCheckAll} = defineProps(["attackRangeCheckAll", "countDownCheckAll"])
+const handleLabelClick = (label) => {
+  enemies.forEach(enemy => {
+    enemy.options.RoutesVisible = false;
+  })
+  const find = enemies.find(enemy => enemy.id === label.id);
+  find.options.RoutesVisible = true;
+  pauseGame();
+}
 
-const handleLabelClick = (index) => {
-  emit('pause');
+const pauseGame = () => {
+  if(showEnemyMenu){
+    emit('pause');
+  }
 }
 
 //全选显示攻击范围
@@ -209,7 +247,7 @@ watch(() => attackRangeCheckAll, () => {
     const enemy = enemies[index];
 
     if(enemy.isRanged()){
-      label.options.attackRangeVisible = attackRangeCheckAll;
+      label.options.AttackRangeVisible = attackRangeCheckAll;
     }
     
   })
@@ -228,7 +266,7 @@ const handleAttackRangeCheck = () => {
 
   let count = 0;
   labels.forEach(label => {
-    if(label.options.attackRangeVisible){
+    if(label.options.AttackRangeVisible){
       count++;
     }
   })
@@ -237,32 +275,42 @@ const handleAttackRangeCheck = () => {
   emit("update:attackRangeIndet",isIndeterminate);
 }
 
-//全选显示等待时间
-watch(() => countDownCheckAll, () => {
-  enemyLabels.value.forEach(label => {
-
-    label.options.countDownVisible = countDownCheckAll;
-    
-  })
-})
 
 const handleCountDownCheck = () => {
 
   let count = 0;
-  enemyLabels.value.forEach(label => {
-    if(label.options.countDownVisible){
+  const labels = [...enemyLabels.value, ...trapLabels.value];
+  labels.forEach(label => {
+    if(label.options.CountDownVisible){
       count++;
     }
   })
 
-  const isIndeterminate = count > 0 && count < enemyLabels.value.length;
-  emit("update:countDownIndet",isIndeterminate);
+  const isIndeterminate = count > 0 && count < labels.length;
+  emit("update:countDownIndet", isIndeterminate);
 }
 
 const showDetail = (enemyId: number) => {
   const find = enemies.find(enemy => enemy.id === enemyId);
-  console.log(find);
+  eventBus.emit("showDetail", find.enemyData);
+  console.log(find)
 }
+
+//全选显示等待时间
+watch(() => countDownCheckAll, () => {
+  enemyLabels.value.forEach(label => {
+
+    label.options.CountDownVisible = countDownCheckAll;
+    
+  })
+
+  trapLabels.value.forEach(label => {
+
+    label.options.CountDownVisible = countDownCheckAll;
+    
+  })
+})
+
 //#endregion
 
 
@@ -276,17 +324,13 @@ const trapDialog = ref({
   visible: false
 });
 
-const updateTraps = () => {
+const updateTrapSelected = () => {
   const find = trapManager.getSelected();
 
   if(find){
     activeTrap = find;
 
-    const tempV = new THREE.Vector3();
-    find.object.getWorldPosition(tempV);
-    tempV.project(gameCanvas.camera);
-    const x = (tempV.x *  .5 + .5) * gameCanvas.canvas.clientWidth;
-    const y = (tempV.y * -.5 + .5) * gameCanvas.canvas.clientHeight;
+    const {x, y} = gameView.localToWorld(find.object.position);
 
     trapDialog.value.left = x -50;
     trapDialog.value.top = y -50;
@@ -305,11 +349,93 @@ const handleRemoveTrap = () => {
 
 //#endregion
 
+
+//#region  装置label绑定                            
+let traps: Trap[] = [];
+const trapLabels = ref([]);
+
+const initTrapLabels = () => {
+  traps = [...trapManager.traps];
+  traps.forEach((trap, index) => {
+    trapLabels.value.push({
+      alias: trap.alias,
+      key: trap.key,
+      options: trap.options,
+      style: {}
+    });
+    trap.labelVue = trapLabels.value[index];
+  })
+}
+
+const updateTrapSize = () => {
+  const scale = canvasHeight / GameConfig.OBJECT_SCALE;
+  traps.forEach(trap => {
+
+    const {x, y} = gameView.localToWorld(trap.object.position);
+
+    const label = trap.labelVue;
+    
+    const trapHeight = gameManager.getPixelSize(GameConfig.TILE_SIZE);
+    const trapWidth = trapHeight;
+
+    label.style = {
+      height: trapHeight + 'px',
+      width: trapWidth + 'px',
+      left: x - trapWidth / 2 + 'px', 
+      top: y - trapHeight / 2 + 'px',
+      transform: `scale(${scale})`
+    }
+
+  })
+}
+
+const updateTrapVisible = () => {
+  traps.forEach(trap => {
+    const label = trap.labelVue;
+    label.visible = trap.visible;
+  });
+}
+
+const updateTrapDatas = () => {
+  traps.forEach(trap => {
+    if(!trap.visible) return;
+
+    const label = trap.labelVue;
+
+    const countDown = trap.countdown.getCountdownTime("waiting");
+
+    if(countDown > 0){
+      label.countDown = Math.floor(countDown);
+    }else{
+      label.countDown = -1;
+    }
+
+
+  })
+}
+//#endregion
+
+
+//点击地图其他地方
+const handleContainerClick = () => {
+  enemies.forEach(enemy => {
+    enemy.options.RoutesVisible = false;
+  })
+}
+
 const update = () => {
-  updateLabelVisible();
-  updateLabelPosAndSize();
-  updateDatas();
-  updateTraps();
+  canvasHeight = gameCanvas.canvas.clientHeight;
+  canvasWidth = gameCanvas.canvas.clientWidth;
+
+  updateEnemyVisible();
+  updateEnemyPosAndSize();
+  updateEnemyDatas();
+  updateTrapSelected();
+
+  updateTrapVisible();
+  updateTrapDatas();
+  updateTrapSize();
+  
 }
 
 const animate = () => {
@@ -323,20 +449,36 @@ const animate = () => {
 
 animate();
 
-// defineExpose 来显式指定在组件中要暴露出去的属性。
-defineExpose({
-  changeGameManager
+const changeGameManager = () => {
+  enemies = [];
+  traps = [];
+  enemyLabels.value = [];
+  trapLabels.value = [];
+
+  gameView = gameManager.gameView;
+  waveManager = gameManager.waveManager;
+  trapManager = gameManager.trapManager;
+  enemies = waveManager.enemies;
+
+  initEnemyLabels();
+  initTrapLabels();
+}
+
+watch(() => gameManager, () => {
+  changeGameManager();
 })
+
 
 </script>
 
 <style scoped lang="scss">
 .container{
-  height: 100%;
+  position: absolute;
   left: 0;
   right: 0;
   top: 0;
   bottom: 0;
+  z-index: 600;
 }
 
 .label{
@@ -351,33 +493,45 @@ defineExpose({
   text-align: center;
   justify-content: center;
   align-items: flex-end;
+  z-index: 1000;
   .countdown{
+    position: absolute;
     text-align: center;
-    line-height: 17px;
-    height: 18px;
-    width: 18px;
+    line-height: 20px;
+    height: 20px;
+    width: 20px;
     background-color: white;
     color: black;
-    border-radius: 13px;
+    border-radius: 22px;
     border: 1px solid black;
     margin-left: 2px;
     margin-right: 2px;
+    margin-bottom: 5px;
   }
   .end-countdown{
     background-color: red;
     color: white;
   }
   .big{
-    height: 22px;
-    width: 22px;
-    line-height: 22px;
+    height: 23px;
+    width: 23px;
+    line-height: 23px;
     font-size: 10px;
   }
   .middle{
-    font-size: 10px;
+    font-size: 11px;
   }
   .small{
-    font-size: 14px;
+    font-size: 13px;
+  }
+
+  &.trap-label{
+    z-index: 500;
+    .countdown{
+      margin-bottom: 13px;
+      background-color: #1f4c9f;
+      color:white;
+    }
   }
 }
 

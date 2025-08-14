@@ -1,12 +1,13 @@
 import * as THREE from "three";
-import GameManager from "./GameManager";
 import GameConfig from "../utilities/GameConfig";
 import spine from "@/assets/script/spine-threejs.js";
 import { GC_Add } from "./GC";
 import Tile from "./Tile";
+import { Countdown } from "./CountdownManager";
+import TrapHandler from "../entityHandler/TrapHandler";
+import Global from "../utilities/Global";
 
 class Trap{
-  gameManager: GameManager;
   data: trapData;  //原始数据
   isTokenCard: boolean = false;  //是否是待部署区装置
   iconUrl: string; 
@@ -31,6 +32,16 @@ class Trap{
   tile: Tile;   //装置位于的地块
 
   isSelected: boolean = false;       //是否被鼠标选中
+
+  extraData: any;
+  extraWaveId: number;
+  countdown: Countdown;
+
+  labelVue: any;   //前台显示数据
+  //vue中可供更改的数据
+  options = {
+    CountDownVisible: true
+  }
   constructor(data: trapData){
     this.data = data;
     this.isTokenCard = data.isTokenCard;
@@ -41,41 +52,72 @@ class Trap{
     this.mainSkillLvl = data.mainSkillLvl;
     this.visible = !data.hidden;
 
+    this.extraData = data.extraData;
+    this.countdown = Global.gameManager.countdownManager.getCountdownInst();
+
+    this.initSkill();
   }
 
-  initMesh(){
+  initObject(){
     this.object = new THREE.Object3D();
-    GC_Add(this.object);
-    this.skeletonData = this.data.skeletonData;
-    this.textureMat = this.data.textureMat;
-
-    const height = this.tile.height? this.tile.height : 0;
-
-    if( this.data.mesh){
-
-      this.initFbx();
-      
-      //调整高台装置的高度
-      this.object.position.z = this.tile.getPixelHeight();    
-
-    }else if(this.skeletonData){
-
-      this.initSpine();
-      this.object.position.z = this.gameManager.getPixelSize(height + 1/14) ;
-    }else if(this.textureMat){
-      this.initTexture()
-      this.object.position.z = this.gameManager.getPixelSize(height) + 0.15;
-    }
-
-    const coordinate = this.gameManager.getCoordinate(this.position);
+    const coordinate = Global.gameManager.getCoordinate(this.position);
     this.object.position.x = coordinate.x;
     this.object.position.y = coordinate.y;
 
     this.object.visible = this.visible;
     
     this.object.userData.trap = this;
-    //初始化技能（目前就是影响一些外观）
-    this.initSkill();
+  }
+
+  initMesh(){
+    this.initObject();
+    GC_Add(this.object);
+    this.skeletonData = this.data.skeletonData;
+    this.textureMat = this.data.textureMat;
+
+    if( this.data.mesh){
+
+      this.initFbx();
+
+    }else if(this.skeletonData){
+
+      this.initSpine();
+
+    }else if(this.textureMat){
+      this.initTexture()
+
+    }
+
+    this.initHeight();
+
+    switch (this.key) {
+      //土石结构的壳
+      case "trap_032_mound":
+        if(this.mainSkillLvl === 1){
+          const skin = this.fbxMesh.children[1];
+          this.fbxMesh.remove(skin);
+          GC_Add(skin);
+        }
+        break;
+    }
+    
+  }
+
+  initHeight(){
+    const height = this.tile.height? this.tile.height : 0;
+    if( this.data.mesh){
+      
+      //调整高台装置的高度
+      this.object.position.z = this.tile.getPixelHeight();    
+
+    }else if(this.skeletonData){
+
+      this.object.position.z = Global.gameManager.getPixelSize(height + 1/14) ;
+
+    }else if(this.textureMat){
+      this.object.position.z = Global.gameManager.getPixelSize(height) + 0.15;
+
+    }
   }
 
   initFbx(){
@@ -107,7 +149,7 @@ class Trap{
     //从数据创建SkeletonMesh并将其附着到场景
     this.skeletonMesh = new spine.threejs.SkeletonMesh(this.skeletonData);
     this.object.add(this.skeletonMesh);
-    this.skeletonMesh.position.y = this.gameManager.getPixelSize(-1/4);
+    this.skeletonMesh.position.y = Global.gameManager.getPixelSize(-1/4);
     this.skeletonMesh.rotation.x = GameConfig.MAP_ROTATION;
     
     this.skeletonMesh.state.setAnimation(
@@ -119,7 +161,7 @@ class Trap{
   }
 
   initTexture(){
-    const textureSize = this.gameManager.getPixelSize(1);
+    const textureSize = Global.gameManager.getPixelSize(1);
     const textureGeo = new THREE.PlaneGeometry( textureSize, textureSize );
     this.textureMesh = new THREE.Mesh(textureGeo, this.textureMat);
     GC_Add(textureGeo);
@@ -129,18 +171,12 @@ class Trap{
   }
 
   initSkill(){
-    switch (this.key) {
-      //土石结构的壳
-      case "trap_032_mound":
-        if(this.mainSkillLvl === 1){
-          const skin = this.fbxMesh.children[1];
-          this.fbxMesh.remove(skin);
-          GC_Add(skin);
-        }
-        break;
-    
-    }
+    TrapHandler.initSkill(this);
+  }
 
+  bindTile(tile: Tile){
+    this.tile = tile;
+    this.position = tile.position;
   }
 
   public show(){
@@ -159,6 +195,10 @@ class Trap{
     
   }
 
+  public start(){
+    TrapHandler.start(this);
+  }
+
   public get(){
     const state = {
       visible: this.visible
@@ -170,6 +210,7 @@ class Trap{
   public set(state){
     const { visible } = state;
     visible? this.show() : this.hide();
+
   }
 
   public destroy() {

@@ -1,9 +1,11 @@
 <script lang="ts" setup>
+import * as THREE from "three"
 import {setupCanvas} from '@/components/game/GameCanvas.ts';
 import GameConfig from "@/components/utilities/GameConfig";
 import eventBus from "@/components/utilities/EventBus";
 import { accuracyNum, timeFormat } from "@/components/utilities/utilities";
 import Container from "@/pages/Container.vue"
+import SVGRoute from "@/pages/SVGRoute.vue"
 import GameOverMask from "@/pages/GameOverMask.vue"
 import DataTable from "@/pages/DataTable.vue"
 import TokenCards from "@/pages/TokenCards.vue"
@@ -11,11 +13,20 @@ import MapModel from "@/components/game/MapModel";
 import GameManager from "@/components/game/GameManager";
 import { computed, onMounted, ref, shallowRef, watch } from 'vue';
 
+import btnPause from '@/assets/images/btn_pause.png';
+import btnPlay from '@/assets/images/btn_play.png';
+import btnSpeed1x from '@/assets/images/btn_speed_1x.png';
+import btnSpeed2x from '@/assets/images/btn_speed_2x.png';
+import btnSpeed4x from '@/assets/images/btn_speed_4x.png';
+
+import Notice from "@/pages/Notice.vue"
+
 
 //#region 游戏基础功能
 let mapData = null;
 let mapModel: MapModel;
 let gameManager: GameManager;
+const gameManagerRef = shallowRef();
 
 const gameSpeed = ref();
 const maxSecond = ref(0);
@@ -27,6 +38,8 @@ const wrapperRef = ref();
 const containerRef = ref();
 const tokenCardsRef = ref();
 const tokenCards = shallowRef([]);
+const maxEnemyCount  = ref(0);
+const finishedEnemyCount = ref(0);
 
 const isStart = ref(false);
 const isFinished = ref(false);
@@ -42,6 +55,8 @@ const reset = () => {
   isSliding.value = false;
   sliderValue.value = 0;
   attackRangeVisible.value = false;
+  maxEnemyCount.value = 0;
+  finishedEnemyCount.value = 0;
 }
 reset();
 
@@ -55,6 +70,9 @@ eventBus.on("second_change", (second: number) => {
 eventBus.on("gameStart", () => {
   loading.value = false;
 })
+eventBus.on("setData", (data) => {
+  finishedEnemyCount.value = data.finishedEnemyCount;
+})
 eventBus.on("update:maxSecond", (_maxSecond) => {
   maxSecond.value = _maxSecond;
 })
@@ -64,7 +82,7 @@ eventBus.on("update:isFinished", (_isFinished) => {
 
 
 const formatTooltip = (val: number) => {
-  return timeFormat(val * GameConfig.SIMULATE_STEP)
+  return val * GameConfig.SIMULATE_STEP + "秒"
 }
 
 const changeGameSpeed = () => {
@@ -82,6 +100,7 @@ const changeSecond = (val: number) => {
   }
   isSliding.value = true;
   pause.value = true;
+
   eventBus.emit("jump_to_time_index", val);
 }
 
@@ -92,7 +111,7 @@ const endSlider = () => {
 }
 
 const MS = computed(() => {
-  return timeFormat(currentSecond.value);
+  return currentSecond.value + "秒";
 })
 
 const restart = () => {
@@ -113,7 +132,6 @@ const newGame = async (map) => {
   
   isStart.value = true;
   isFinished.value = false;
-  containerRef.value.changeGameManager(null);
   loading.value = true;
 
   mapModel = new MapModel(mapData);
@@ -123,16 +141,19 @@ const newGame = async (map) => {
     gameManager.destroy();
   }
 
-  generateStageInfo();
-  handleEnemyDatas(mapModel.enemyDatas);
   reset();
   gameSpeed.value = GameConfig.GAME_SPEED;
 
   gameManager = new GameManager(mapModel);
-  
+
+  gameManagerRef.value = gameManager;
+  maxEnemyCount.value = gameManager.waveManager.maxEnemyCount;
+
   tokenCards.value = gameManager.tokenCards;
-  containerRef.value.changeGameManager(gameManager);
-  tokenCardsRef.value.changeGameManager(gameManager);
+
+  generateStageInfo();
+  handleEnemyDatas(mapModel.enemyDatas);
+
 }
 //#endregion
 
@@ -141,14 +162,17 @@ const title = ref("");
 const challenge = ref("");
 const description = ref("");
 const stageAttrInfo = ref("");
+const characterLimit = ref(0);
 
 //生成关卡详情
 const generateStageInfo = () => {
   const {levelId, operation, cn_name, challenge: _challenge, description:_description} = mapData;
   console.log(levelId)
   title.value = `${operation} ${cn_name}`;
-  challenge.value = _challenge;
-  description.value = _description;
+
+  challenge.value = _challenge?.replace(/<@[\s\S]*?>|<\/[\s\S]*?>|\\n/g, "");
+  description.value = _description?.replace(/<@[\s\S]*?>|<\/[\s\S]*?>|\\n/g, "");
+  characterLimit.value = mapData.options.characterLimit;
 
   const enemyDatas = mapModel.enemyDatas;
 
@@ -288,10 +312,20 @@ const handleEnemyDatas = (_enemyDatas) => {
 }
 //#endregion
 
+//绑定快捷键
+document.addEventListener("keydown", (event) => {
+  if(event.code === "Digit1"){ 
+    changeGameSpeed();
+  }else if(event.code === "Digit2"){
+    changePause();
+  }
+})
+
 const attackRangeCheckAll = ref(false);
 const attackRangeIndet = ref(false);
 const countDownCheckAll = ref(true);
 const countDownIndet = ref(false);
+const showEnemyMenu = ref(false);
 
 defineExpose({
   newGame
@@ -300,11 +334,13 @@ defineExpose({
 </script>
 
 <template>
-<div class="main">
-
-  <div class="game" v-loading="loading">
-    <div class="toolbar" v-show="isStart">
-      <span class="ms">{{ MS }}</span>
+<div class="main" v-loading="loading">
+  <Notice/>
+  <div class="game">
+    
+    <div class="toolbar" v-show="isStart">  
+      
+      <span class="lifepoint"> {{ finishedEnemyCount }} / {{maxEnemyCount}}</span>
       <div class="time-slider">
         <el-slider 
           v-model = "sliderValue" 
@@ -316,13 +352,21 @@ defineExpose({
       </div>
 
       <div class="buttons">
-        <button @click="changeGameSpeed()">{{gameSpeed}}X</button>
-        <button 
-          @click="changePause()"
-          class="play"
+        <div 
+          @click="changeGameSpeed()"
+          class="button"
         >
-          {{pause?"播放":"暂停"}}
-        </button>
+          <img v-show="gameSpeed === 1" :src="btnSpeed1x">
+          <img v-show="gameSpeed === 2" :src="btnSpeed2x">
+          <img v-show="gameSpeed === 4" :src="btnSpeed4x">
+        </div>
+        <div 
+          @click="changePause()"
+          class="button"
+        >
+          <img style="height: 80px;" v-show="!pause" :src="btnPause">
+          <img style="height: 80px;" v-show="pause" :src="btnPlay">
+        </div>
       </div>
 
       <div class="checkboxs">
@@ -341,6 +385,12 @@ defineExpose({
         >
           显示等待时间
         </el-checkbox>
+
+        <el-checkbox
+          v-model="showEnemyMenu"
+        >
+          点击敌人后显示菜单
+        </el-checkbox>
       </div>
     </div>
     <div class="content">
@@ -351,18 +401,28 @@ defineExpose({
           @pause = "pause = true"
           :attackRangeCheckAll = "attackRangeCheckAll"
           :countDownCheckAll = "countDownCheckAll"
+          :showEnemyMenu = "showEnemyMenu"
           @update:attackRangeIndet = "val => attackRangeIndet = val"
           @update:countDownIndet = "val => countDownIndet = val"
+          :gameManager = "gameManagerRef"
         ></Container>
+
+        <SVGRoute
+          :gameManager = "gameManagerRef"
+        ></SVGRoute>
         <GameOverMask
           v-show="isFinished"
           @restart = "restart"
         ></GameOverMask>
       </div>
-      <div class="game-tools">
+      <div 
+        class="game-tools"
+        v-show="tokenCards.length > 0"
+      >
         <TokenCards
           ref = "tokenCardsRef"
           :tokenCards = "tokenCards"
+          :gameManager = "gameManagerRef"
         ></TokenCards>
       </div>
     </div>
@@ -373,6 +433,7 @@ defineExpose({
   <div class="info">
     <h2>{{ title }}</h2>
     <p class="description">{{ description }}</p>
+    <p>部署上限：{{ characterLimit }}</p>
     <p v-if="challenge"><span class="challenge">突袭条件：</span>{{ challenge }}</p>
     <p v-if="stageAttrInfo"><span class="challenge">属性加成：</span>
       <span v-html="stageAttrInfo"></span>
@@ -393,6 +454,7 @@ defineExpose({
   width: 100%;
   flex-direction: column;
   overflow-y: auto;
+  position: relative;
 }
 .game{
   display: flex;
@@ -405,14 +467,16 @@ defineExpose({
     height: 80px;
     background-color: black;
     padding-top: 10px;
-    .ms{
+    .lifepoint{
+      font-size: 18px;
+      margin-left: 20px;
+      width: 60px;
       color: white;
     }
     .time-slider{
-      width: 600px;
+      width: 400px;
       margin-left: 40px;
     }
-
   }
   .content{
     flex: 1;
@@ -436,21 +500,20 @@ defineExpose({
 }
 
 .buttons{
-  width: 140px;
+  width: 180px;
   display: flex;
-  margin-left: 40px;
+  margin-left: 20px;
+  margin-right: 20px;
   
-  button{
+  .button{
     user-select: none;
-    font-size: 30px;
     cursor: pointer;
     height: 60px;
-    background-color: white;
-  }
-  .play{
-    line-height: 0px;
-    margin-left: 20px;
-    font-size: 20px;
+    overflow: hidden;
+    text-align: center;
+    img{
+      height: 74px;
+    }
   }
 }
 
@@ -458,6 +521,9 @@ defineExpose({
   width: 160px;
   background-color: white;
   padding-left: 10px;
+  ::v-deep .el-checkbox{
+    height: 20px;
+  }
 }
 
 canvas{

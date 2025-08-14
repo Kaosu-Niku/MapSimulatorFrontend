@@ -1,5 +1,5 @@
+import Global from "../utilities/Global";
 import { Countdown } from "./CountdownManager";
-import GameManager from "./GameManager";
 
 class TokenCard{
   initialCnt: number;
@@ -20,12 +20,11 @@ class TokenCard{
   cost: number;     //费用
   respawntime: number;   //再部署时间
 
-  gameManager: GameManager;
   countdown: Countdown;
 
   cardVue: any;   //vue proxy对象
 
-  constructor(data, gameManager: GameManager){
+  constructor(data){
     this.initialCnt = data.initialCnt;
     this.hidden = data.hidden;
     this.alias = data.alias;
@@ -43,23 +42,41 @@ class TokenCard{
 
     this.currentCnt = this.initialCnt;
 
-    this.gameManager = gameManager;
-    this.countdown = gameManager.countdownManager.getCountdownInst();
+    this.countdown = Global.gameManager.countdownManager.getCountdownInst();
   }
 
   //选择
   handleSelected(){
-    this.selected = !this.selected;
-    this.cardVue.selected = this.selected;
+    if(this.cnt > 0 ){
+      const respawnTime = this.countdown.getCountdownTime("respawn");
+      if(respawnTime === -1){
+        this.selected = !this.selected;
+        this.cardVue.selected = this.selected;
+      }
+    }
   }
 
   //部署
   handleDeploy(){
     this.selected = false;
     this.cardVue.selected = false;
-    this.countdown.addCountdown("respawn", this.respawntime, () => {
-      //todo
-    })  
+    this.cnt--;
+    if(this.cnt > 0){
+      this.countdown.addCountdown({
+        name: "respawn", 
+        initCountdown: this.respawntime
+      })  
+    }
+  }
+
+  get(){
+    return {
+      cnt: this.cnt
+    }
+  }
+
+  set(state){
+    this.cnt = state.cnt;
   }
 }
 

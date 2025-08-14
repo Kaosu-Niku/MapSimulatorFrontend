@@ -1,14 +1,7 @@
 import * as THREE from "three"
 import GameConfig from "../utilities/GameConfig";
 import Trap from "./Trap";
-
-enum Direction{
-  UP,
-  RIGHT,
-  DOWN,
-  LEFT
-}
-
+import { Direction } from "../utilities/Enum";
 
 const specialTrap = {
   trap_011_ore:{
@@ -155,7 +148,11 @@ const specialTrap = {
   },
   trap_247_crfilm:{
     direction: Direction.RIGHT,
-  }
+  },
+
+  '1334_ristar':{
+    scaleRate: 0.85
+  },
 }
 
 //目前到trap_027_stone结束

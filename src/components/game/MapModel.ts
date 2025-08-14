@@ -4,18 +4,18 @@ import TileManager from "./TileManager"
 import {getEnemiesData} from "@/api/stages"
 import AliasHelper from "./AliasHelper";
 import spine from "@/assets/script/spine-threejs.js";
-import { getAnimation } from "@/components/utilities/SpineHelper"
+import { checkAnimation, getAnimation } from "@/components/utilities/SpineHelper"
 import GameConfig from "../utilities/GameConfig";
 //资源一开始就加载完毕，所以放到这里处理
 import assetsManager from "@/components/assetManager/assetsManager"
 import * as THREE from "three"
-import { unitizeFbx  } from "./FbxHelper";
 
-import { getTrapsKey, getSpinesKey, getTokenCards } from "@/api/assets";
+import { getTrapsKey, getMeshsKey, getTokenCards } from "@/api/assets";
 import { GC_Add } from "./GC";
 import { parseSkill, parseTalent } from "./SkillHelper";
 import SPFA from "./SPFA";
 import TokenCard from "./TokenCard";
+import { immuneTable } from "../utilities/Interface";
 
 //对地图json进行数据处理
 //保证这个类里面都是不会更改的纯数据，因为整个生命周期里面只会调用一次
@@ -26,10 +26,14 @@ class MapModel{
   public tileManager: TileManager; //地图tiles
   public tokenCards: any[] = [];
   public trapDatas: trapData[] = [];
-  public actionDatas: ActionData[][] = [];
-  public enemyDatas: EnemyData[] = [];
-  public enemyRoutes: EnemyRoute[] = [];
 
+  public actionDatas: ActionData[][] = [];
+  public extraActionDatas: ActionData[][] = [];
+
+  public enemyDatas: EnemyData[] = [];
+
+  public routes: EnemyRoute[] = [];
+  public extraRoutes: EnemyRoute[] = [];
 
   public SPFA: SPFA;  //寻路对象
   constructor(data: any){
@@ -50,44 +54,71 @@ class MapModel{
     await this.getTrapDatas();
     
     //解析敌人路径
-    this.parseEnemyRoutes();
+    this.routes = this.parseEnemyRoutes(this.sourceData.routes);
+    this.extraRoutes = this.parseEnemyRoutes(this.sourceData.extraRoutes);
 
     //解析波次数据
-    this.parseActions(this.sourceData.waves)
+    this.parseWaves(this.sourceData.waves);
+
     await this.initEnemyData(this.sourceData.enemyDbRefs);
     //获取哪些敌人的spine是可用的
-    const spineUrls = await this.getEnemySpineUrls();
     //获取敌人spine
-    this.getEnemySpines(spineUrls);
+    await this.getEnemyMeshs();
+
+    this.parseExtraWave();
 
     //绑定route和enemydata 或trap
-    this.actionDatas.flat().forEach( wave => {
+    this.actionDatas.flat().forEach( action => {
       //route可能为null
-      const findRoute: EnemyRoute = this.enemyRoutes.find( route => route.index === wave.routeIndex );
+      const findRoute: EnemyRoute = this.routes.find( route => route.index === action.routeIndex );
       let findEnemyData: EnemyData;
       let findTrap: trapData;
-      switch (wave.actionType) {
+      switch (action.actionType) {
         case "SPAWN":
-          findEnemyData = this.enemyDatas.find(e => e.waveKey === wave.key);
+          findEnemyData = this.enemyDatas.find(e => e.waveKey === action.key);
           break;
       
         case "ACTIVATE_PREDEFINED":
-          findTrap = this.trapDatas.find(data => data.alias === wave.key);
+          findTrap = this.trapDatas.find(data => data.alias === action.key);
           break;
       }
       
 
-      if(findRoute) wave.route = findRoute;
+      if(findRoute) action.route = findRoute;
       if(findEnemyData) {
-        wave.enemyData = findEnemyData
+        action.enemyData = findEnemyData
         findEnemyData.count ++;
       }else if(findTrap){
         //wave中的trap是指名道姓的实体
-        wave.trapData = findTrap;
+        action.trapData = findTrap;
       }
     })
-    
-    this.SPFA = new SPFA(this.tileManager, this.enemyRoutes);
+
+    this.extraActionDatas.flat().forEach(action => {
+      const findRoute: EnemyRoute = this.extraRoutes.find( route => route.index === action.routeIndex );
+      let findEnemyData: EnemyData;
+      let findTrap: trapData;
+      switch (action.actionType) {
+        case "SPAWN":
+          findEnemyData = this.enemyDatas.find(e => e.waveKey === action.key);
+          break;
+      
+        case "ACTIVATE_PREDEFINED":
+          findTrap = this.trapDatas.find(data => data.alias === action.key);
+          break;
+      }
+      
+
+      if(findRoute) action.route = findRoute;
+      if(findEnemyData) {
+        action.enemyData = findEnemyData
+      }else if(findTrap){
+        //wave中的trap是指名道姓的实体
+        action.trapData = findTrap;
+      }
+    })
+
+    this.SPFA = new SPFA([...this.routes, ...this.extraRoutes]);
 
     this.sourceData = null;
 
@@ -146,7 +177,7 @@ class MapModel{
       const trapKeys:Set<string> = new Set();
 
       tokenInsts.forEach(data => {
-        const {alias, direction, hidden, position, inst, mainSkillLvl} = data;
+        const {alias, direction, hidden, position, inst, mainSkillLvl, overrideSkillBlackboard} = data;
         let key;
 
         switch (inst.characterKey) {
@@ -164,6 +195,18 @@ class MapModel{
 
         }
 
+        let extraData = null;
+
+        //额外数据
+        if(overrideSkillBlackboard){
+          extraData = overrideSkillBlackboard.map(item => {
+            return {
+              key: item.key,
+              value: item.valueStr === null? item.value : item.valueStr
+            }
+          });
+        }
+
         this.trapDatas.push({
           isTokenCard: false,
           alias,
@@ -171,7 +214,8 @@ class MapModel{
           hidden,
           direction: AliasHelper(direction, "predefDirection"),
           position: RowColToVec2(position),
-          mainSkillLvl
+          mainSkillLvl,
+          extraData
         });
 
         trapKeys.add(key);
@@ -185,49 +229,21 @@ class MapModel{
           hidden: tokenCard.hidden,
           direction: "UP",
           position: null,
-          mainSkillLvl: tokenCard.mainSkillLvl
+          mainSkillLvl: tokenCard.mainSkillLvl,
+          extraData: null
         };
         this.trapDatas.push(trapData);
 
         tokenCard.trapData = trapData;
         trapKeys.add(tokenCard.characterKey);
       })
-      
+
       const res = await getTrapsKey(Array.from(trapKeys));
 
       const { fbx: fbxs, spine: spines, image: images } = res.data;
 
       if(fbxs){
-        const meshs: { [key:string]: any}  = {};
-        assetsManager.loadFbx( fbxs ).then(res => {
-          res.forEach((group, index) => {
-
-            let setObj: THREE.Object3D;
-            group.traverse(object => {
-
-              //需要添加到场景中的obj
-              if(object.name === fbxs[index].fbx){
-                setObj = object;
-              }
-              let { material: oldMat } = object
-              if(oldMat){
-                object.material =  new THREE.MeshMatcapMaterial({
-                  color: oldMat.color,
-                  map: oldMat.map
-                });
-
-                oldMat.dispose();
-
-              }
-            })
-
-            
-            GC_Add(setObj);
-            //让fbx对象的大小、方向、高度统一化
-            unitizeFbx(setObj, fbxs[index].name);
-
-            meshs[fbxs[index].name] = setObj;
-          })
+        assetsManager.loadFbx( fbxs ).then(meshs => {
 
           this.trapDatas.forEach( trapData => {
             trapData.mesh = meshs[trapData.key];
@@ -333,91 +349,107 @@ class MapModel{
 
 
   //解析波次
-  private parseActions(waves: any[]){ 
+  private parseWaves(waves: any[]){ 
     //waves:大波次(对应关卡检查点) fragments:中波次 actions:小波次
     waves.forEach((wave: any) => {
 
       //有时候会有空的wave 例如圣徒boss战
       if(wave.fragments.length === 0) return;
 
-      let currentTime = 0;
+      let currentTime = wave.preDelay;
       
-      const innerWaves: ActionData[] = [];
-      currentTime += wave.preDelay;
-      let waveTime = currentTime;
-      wave.fragments.forEach((fragment: any) => {
-        
-        currentTime += fragment.preDelay;
-        let fragmentTime = currentTime;
-        let lastTime = currentTime;//action波次的最后一只怪出现时间
-
-        fragment.actions.forEach((action: any) =>{
-          for(let i=0; i<action.count; i++){
-            //检查敌人分组
-            const check = this.runesHelper.checkEnemyGroup(action.hiddenGroup);
-
-            if(!check) return;
-
-            let startTime = currentTime + action.preDelay + action.interval*i;
-            lastTime = Math.max(lastTime, startTime);
-            action.actionType = AliasHelper(action.actionType, "actionType");
-
-            //"actionType": "DISPLAY_ENEMY_INFO"这个显示敌人信息的action
-            //虽然不会加入波次里面，但是该算的preDelay还是要算的
-            let actionKey;
-            switch (action.actionType) {
-              case "SPAWN":
-                actionKey = this.runesHelper.checkEnemyChange( action.key );
-                break;
-              case "ACTIVATE_PREDEFINED": //激活装置
-                actionKey = action.key;
-                break;
-            }
-            
-            if(actionKey){
-              let eAction: ActionData = {
-                actionType: action.actionType,
-                key: actionKey,
-                routeIndex : action.routeIndex,
-                startTime,
-                fragmentTime,
-                waveTime,
-                dontBlockWave: action.dontBlockWave,
-                blockFragment: action.blockFragment,
-                hiddenGroup: action.hiddenGroup
-              }
-
-              innerWaves.push(eAction);
-            }
-          }
-        })
-
-        currentTime = lastTime;
-
-      })
+      const innerWaves = this.parseActions(wave.fragments, currentTime)
       
-      innerWaves.sort((a, b)=>{
-        return a.startTime - b.startTime;
-      })
-
       this.actionDatas.push(innerWaves);
+
+      //todo postDelay实际上没应用
       currentTime += wave.postDelay;
     });
     
   }
 
+  private parseActions(fragments: any[], currentTime: number): ActionData[]{
+
+    const innerWaves: ActionData[] = [];
+
+    fragments.forEach((fragment: any) => { 
+        
+      currentTime += fragment.preDelay;
+      let fragmentTime = currentTime;
+      let lastTime = currentTime;//action波次的最后一只怪出现时间
+
+      fragment.actions.forEach((action: any) =>{
+        
+        for(let i=0; i<action.count; i++){
+          //检查敌人分组
+          const check = this.runesHelper.checkEnemyGroup(action.hiddenGroup);
+
+          if(!check) return;
+
+          let startTime = currentTime + action.preDelay + action.interval*i;
+          lastTime = Math.max(lastTime, startTime);
+          action.actionType = AliasHelper(action.actionType, "actionType");
+
+          //"actionType": "DISPLAY_ENEMY_INFO"这个显示敌人信息的action
+          //虽然不会加入波次里面，但是该算的preDelay还是要算的
+          let actionKey;
+          switch (action.actionType) {
+            case "SPAWN":
+              actionKey = this.runesHelper.checkEnemyChange( action.key );
+              break;
+            case "ACTIVATE_PREDEFINED": //激活装置
+              actionKey = action.key;
+              break;
+          }
+          
+          if(actionKey){
+            
+            if(action.key === "enemy_1334_ristar"){
+              action.dontBlockWave = true;
+            }
+
+            let eAction: ActionData = {
+              actionType: action.actionType,
+              key: actionKey,
+              routeIndex : action.routeIndex,
+              startTime,
+              fragmentTime,
+              dontBlockWave: action.dontBlockWave,
+              blockFragment: action.blockFragment,
+              hiddenGroup: action.hiddenGroup
+            }
+
+            innerWaves.push(eAction);
+          }
+        }
+      })
+
+      currentTime = lastTime;
+
+    })
+
+    innerWaves.sort((a, b)=>{
+      return a.startTime - b.startTime;
+    })
+
+    return innerWaves;
+  }
+
   //解析敌人路径
-  private parseEnemyRoutes(){
+  private parseEnemyRoutes(source){
     let routeIndex = 0;
-    this.sourceData.routes.forEach( (sourceRoute: any) =>{
+    const routes = [];
+    source.forEach( (sourceRoute: any) =>{
 
       //某些敌人(例如提示)没有路径route，所以会出现null，做下兼容处理
       //E_NUM不算进敌人路径内，例如"actionType": "DISPLAY_ENEMY_INFO"这个显示敌人信息的action
       if(sourceRoute && sourceRoute.motionMode !== "E_NUM") {
-
         const route: EnemyRoute = {
           index: routeIndex,
-          allowDiagonalMove: sourceRoute.allowDiagonalMove,  //是否允许斜角路径
+          allowDiagonalMove: sourceRoute.allowDiagonalMove,  //是否允许斜角路径          
+          visitEveryTileCenter: sourceRoute.visitEveryTileCenter,
+          visitEveryNodeCenter: sourceRoute.visitEveryNodeCenter,
+          visitEveryNodeStably: !sourceRoute.checkpoints || sourceRoute.checkpoints.length === 0,
           startPosition: RowColToVec2(sourceRoute.startPosition),
           endPosition: RowColToVec2(sourceRoute.endPosition),
           motionMode: AliasHelper(sourceRoute.motionMode, "motionMode"),
@@ -447,11 +479,12 @@ class MapModel{
           randomizeReachOffset: false
         })
 
-        this.enemyRoutes.push(route);
+        routes.push(route);
       }
       routeIndex ++;
     })
 
+    return routes;
   }
 
   //覆盖数据
@@ -585,27 +618,56 @@ class MapModel{
     })
 
     enemyDatas.forEach(enemyData => {
-      enemyData.talents = parseTalent(enemyData.talentBlackboard);
-      enemyData.skills = parseSkill(enemyData.skills); 
+      enemyData.motion = AliasHelper(enemyData.motion, "motionMode");
+      enemyData.levelType = AliasHelper(enemyData.levelType, "levelType");
+      enemyData.applyWay = AliasHelper(enemyData.applyWay, "applyWay");
+      this.runesHelper.checkTalentChanges(enemyData);
       this.runesHelper.checkEnemyAttribute(enemyData);
+
+      enemyData.talents = parseTalent(enemyData);
+      enemyData.skills = parseSkill(enemyData); 
+
+      enemyData.immunes = [];
+      //异常抗性
+      Object.keys(immuneTable).forEach(immuneKey => {
+        if(enemyData.attributes[immuneKey]){
+          enemyData.immunes.push(immuneKey);
+        }
+      })
     })
 
     this.enemyDatas = enemyDatas;
   }
 
-  private async getEnemySpineUrls(){
+  private async getEnemyMeshUrls(){
     const sNames = this.enemyDatas.map(data => data.key.replace("enemy_", ""));
-    const res = await getSpinesKey(sNames);
+    const res = await getMeshsKey(sNames);
     return res.data;
   }
 
-  private async getEnemySpines(spineUrls){
+  private async getEnemyMeshs(){
+    const meshUrls = await this.getEnemyMeshUrls();
 
     const urls = [];
     const skelNames = [];
     const atlasNames = [];
-    Object.keys(spineUrls).forEach(key => {
-      const val = spineUrls[key];
+
+    const fbxs = Object.values(meshUrls.fbx);
+
+    if(fbxs){
+      assetsManager.loadFbx( fbxs ).then(meshs => {
+
+        this.enemyDatas.forEach(data => {
+          const mesh = meshs[data.key.replace("enemy_", "")];
+          if(mesh){
+            data.fbxMesh = mesh;
+          }
+        })
+      })
+    }
+    
+    Object.keys(meshUrls.spine).forEach(key => {
+      const val = meshUrls.spine[key];
       const { skel, atlas } = val;
 
       const skelUrl = `spine/${key}/${skel}`;
@@ -624,7 +686,6 @@ class MapModel{
       const {key} = data;
       const find = urls.find(url => url.key === key.replace("enemy_", ""));
       if(find){
-
         const {atlasUrl, skelUrl} = find;
         //使用AssetManager中的name.atlas和name.png加载纹理图集。
         //传递给TextureAtlas的函数用于解析相对路径。
@@ -640,15 +701,63 @@ class MapModel{
           spineManager.get(skelUrl)
         );
 
+        checkAnimation(key, skeletonData.animations);
         const moveAnimate = getAnimation(key, skeletonData.animations, "Move");
         const idleAnimate = getAnimation(key, skeletonData.animations, "Idle");
 
         data.skeletonData = skeletonData;
         data.moveAnimate = moveAnimate;
         data.idleAnimate = idleAnimate;
+        data.animations = data.skeletonData.animations.map( animation => {
+          return {
+            duration: animation.duration,
+            name: animation.name
+          }
+        });
       }
     })
 
+
+  }
+
+  private parseExtraWave(){
+
+    const branches = this.sourceData.branches;
+
+    this.trapDatas.forEach(trapData => {
+      const actionIndex = trapData.extraData?.find(item => item.key === "action_index")?.value;
+      let branchId = trapData.extraData?.find(item => item.key === "branch_id")?.value;
+      
+      if(actionIndex!== undefined && !branchId){
+        switch (trapData.key) {
+          //压力舒缓帮手
+          case "trap_253_boxnma":
+          case "trap_254_boxmac":
+            branchId = "boxnma_route"
+            break;
+        }
+      }
+
+      if(branchId){
+        const brancheData = branches[branchId]?.phases;
+        let actions: ActionData[];
+
+        if(actionIndex !== null || actionIndex !== undefined){
+          const findAction = brancheData[0]?.actions[actionIndex];
+          actions = this.parseActions([
+            {
+              preDelay: 0,
+              actions: [findAction]
+            }
+          ], 0);
+        }else{
+          actions = this.parseActions(brancheData, 0);
+        }
+
+        trapData.extraWave = actions;
+        this.extraActionDatas.push(actions);
+      }
+    })
   }
 
 }

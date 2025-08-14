@@ -1,27 +1,28 @@
-import GameManager from "./GameManager";
-import TileManager from "./TileManager";
 import Tile from "./Tile";
 import TokenCard from "./TokenCard";
 import Trap from "./Trap";
+import Global from "../utilities/Global";
 
 class TrapManager{
   trapDatas: trapData[];
   traps: Trap[] = [];
-  gameManager: GameManager;
-  tileManager: TileManager;
 
-  constructor(trapDatas: trapData[], gameManager: GameManager){
-    this.gameManager = gameManager;
+  constructor(trapDatas: trapData[]){
     this.trapDatas = trapDatas;
-    this.tileManager = gameManager.tileManager;
 
     trapDatas.forEach(trapData => {
-      if(!trapData.isTokenCard && !trapData.hidden){
+      if(!trapData.isTokenCard){
         const trap = this.createTrap(trapData);
-        this.bindTile(trap);
+
+        if(!trap.tile){
+          const tile = Global.tileManager.getTile(trap.position);
+          trap.bindTile(tile);
+          if(!trapData.hidden){
+            tile.bindTrap(trap);
+          }
+        }
       }
     });
-
     
   }
 
@@ -35,13 +36,6 @@ class TrapManager{
     return this.traps.find(trap => key === trap.alias);
   }
 
-  bindTile(trap: Trap){
-    if(!trap.tile){
-      const tile = this.tileManager.getTile(trap.position);
-      tile.addTrap(trap);
-    }
-  }
-
   getSelected(): Trap{
     return this.traps.find(trap => trap.isSelected);
   }
@@ -52,7 +46,6 @@ class TrapManager{
 
   createTrap(trapData: trapData): Trap{
     const trap = new Trap(trapData);
-    trap.gameManager = this.gameManager;
     this.traps.push(trap);
 
     return trap;
@@ -60,7 +53,8 @@ class TrapManager{
 
   createTokenTrap(tokenCard: TokenCard, tile: Tile): Trap{
     const trap = this.createTrap(tokenCard.trapData);
-    tile.addTrap(trap);
+    trap.bindTile(tile);
+    tile.bindTrap(trap);
     trap.iconUrl = tokenCard.url;
     trap.initMesh();
     return trap;
@@ -69,6 +63,7 @@ class TrapManager{
   removeTrap(trap: Trap){
     trap.tile.removeTrap();
     this.traps.remove(trap);
+    trap.destroy();
   }
 
   get(){

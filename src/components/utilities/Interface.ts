@@ -50,10 +50,15 @@ declare global {
     skelUrl?: string,
     atlasUrl?: string,
     skeletonData?: any,      //skel数据
+    fbxMesh?:any,            //已经实体化的fbxMesh
     skelHeight: number,
     skelWidth: number,
     moveAnimate: string,    //移动时的skel动画名
     idleAnimate: string,     //不动时的skel动画名
+    lifePointReduce: number,   //目标生命
+    immunes: string[],       //异常抗性
+    abilityList: any,        //能力描述
+    animations: any[],        //动画状态
   }
 
   //敌人路径检查点
@@ -69,6 +74,9 @@ declare global {
   interface EnemyRoute{
     index: number, 
     allowDiagonalMove: boolean,  //是否允许斜角路径
+    visitEveryTileCenter: boolean,  //https://www.bilibili.com/opus/900558138389823489
+    visitEveryNodeCenter: boolean,
+    visitEveryNodeStably: boolean,
     checkpoints: Array<CheckPoint>,
     startPosition: Vec2,
     endPosition: Vec2,
@@ -84,7 +92,6 @@ declare global {
     routeIndex: number,
     startTime: number,        //该波次开始时间
     fragmentTime: number,     //分支(FRAGMENT)开始时间
-    waveTime: number,         //波次(WAVE)开始时间
     hiddenGroup: string,      //敌人属于哪个分组
     dontBlockWave: boolean,   //是否不影响下一波次刷新
     blockFragment: boolean,   
@@ -126,6 +133,33 @@ declare global {
     mesh?: THREE.Mesh,     //fbx数据有mesh
     skeletonData?: any,     //spine数据有skeletonData
     textureMat?: THREE.MeshBasicMaterial  //texture数据才有
+    extraData?: any[],      //额外数据
+    extraWave?: any[],      //额外波次
+  }
+
+  interface Effect{
+    attrKey: string,
+    method: string,               //加法：add / 乘法：mul
+    value: number               //具体数值
+  }
+
+  interface BuffParam{
+    id: string,                         //唯一标识，单个enemy上不可重复
+    key: string,                        //buff的key值
+    applyType: string,                 //all:全部，类似于光环技能 enemiesInMap：当前地图上激活的敌人
+    overlay?: boolean,                  //是否可叠加，默认否
+    enemy?: string[],                  //包括哪些敌人
+    enemyExclude?: string[],           //不包括哪些敌人
+    effect?: Effect[],
+    duration?: number,                 //持续时间
+  }
+
+  interface Buff{
+    id: string,                         //唯一标识，单个enemy上不可重复
+    key: string,                        //buff的key值，可重复
+    overlay: boolean,                  //是否可叠加
+    effect: Effect[],
+    duration?: number
   }
 
   interface Array<T> {
@@ -152,3 +186,18 @@ Array.prototype.equal = function(array: any[]): boolean{
 
   return true;
 }
+
+
+const immuneTable = {
+  stunImmune:"晕眩抗性",	
+  silenceImmune:"沉默抗性",
+  sleepImmune:"沉睡抗性",
+  frozenImmune:"冻结抗性",
+  levitateImmune:"浮空抗性	",
+  disarmedCombatImmune:"战栗抗性	",
+  fearedImmune:"恐惧抗性	",
+  palsyImmune:"麻痹抗性",
+  attractImmune:"诱导抗性"
+}
+
+export { immuneTable }

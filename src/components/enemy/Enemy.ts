@@ -1,20 +1,47 @@
 import * as THREE from "three";
-import spine from "@/assets/script/spine-threejs.js";
 
 import GameConfig from "@/components/utilities/GameConfig"
-import GameManager from "../game/GameManager";
-import { getSpineScale, checkEnemyMotion, getAnimationSpeed, getSkelOffset } from "@/components/utilities/SpineHelper"
-import SPFA from "../game/SPFA";
+import { getAnimationSpeed } from "@/components/utilities/SpineHelper";
 import { GC_Add } from "../game/GC";
-import TileManager from "../game/TileManager";
-import WaveManager from "./WaveManager";
 import Action from "../game/Action";
-import { gameCanvas } from "../game/GameCanvas";
 import { Countdown } from "../game/CountdownManager";
+import Tile from "../game/Tile";
+import eventBus from "../utilities/EventBus";
+import Global from "../utilities/Global";
+import EnemyHandler from "../entityHandler/EnemyHandler";
+
+interface AnimateTransition{
+  //transAnimation: 是否有过渡动画
+  //animationScale: 过渡动画执行速率
+  //isWaitTrans: 进行过渡动画时是否停止移动
+  //callback：结束过渡动画后的回调函数
+  moveAnimate: string, 
+  idleAnimate: string, 
+  transAnimation: string, 
+  animationScale?: number,
+  isWaitTrans?: boolean, 
+  callback?: Function
+}
+
+interface Watcher{
+  function: Function,
+  name: string
+}
 
 class Enemy{
+  static shadowMaterial = new THREE.MeshBasicMaterial( { 
+    color: "#000000",
+    transparent: true, // 启用透明度
+    opacity: 0.8 // 设置透明度
+  });
+
+  static activeShadowMaterial = new THREE.MeshBasicMaterial( { 
+    color: "#FF0000",
+    transparent: true, // 启用透明度
+    opacity: 0.8 // 设置透明度
+  });
+
   enemyData: EnemyData;  //原始data数据
-  tileManager: TileManager;
 
   id: number;    //WaveManager中使用的id
   key: string;
@@ -23,17 +50,37 @@ class Enemy{
   name: string;
   description: string;  
   icon: string;            //敌人头像URL
-  notCountInTotal: boolean; //是否是费首要目标
+  notCountInTotal: boolean; //是否是非首要目标
 
   startTime: number;     //该敌人开始时间
   fragmentTime: number;  //分支开始时间
-  waveTime: number;      //大波次开始时间
 
   applyWay: string;      //是否是远程 RANGED:远程 ALL:全部
-  moveSpeedAddons: {[key: string]: number} = {}; //移速倍率
+
+  currentFrameSpeed: number;      //当前帧计算后的最终移速
+
   attributes: {[key: string]: number} = {};    //属性
+  //属性乘区 每帧计算
+  finalAttributes = {
+    atk: 1,
+    attackSpeed: 1,
+    baseAttackTime: 1,
+    def: 1,
+    hpRecoveryPerSec: 1,
+    magicResistance: 1,
+    massLevel: 1,
+    maxHp: 1,
+    moveSpeed: 1,
+    rangeRadius: 1,
+  };    
+
+  public gractrlSpeed: number = 1;       //重力影响的速度倍率
+
+  //属性乘区 每帧从gamebuff里面获取
+  buffs: Buff[] = [];
+
   attackSpeed: number;
-  attrChanges: {[key: string]: any[]}    //属性加成
+  attrChanges: {[key: string]: any[]}    //基础属性变化
 
   talents: any[];          //天赋
   skills: any[];           //技能
@@ -42,8 +89,13 @@ class Enemy{
   inertialVector: THREE.Vector2;          //惯性向量
   velocity: THREE.Vector2;                //当前速度矢量
   faceToward: number = 1;                //1:右, -1:左
+  halfBodyWidth: number = 0.2;
+  obstacleAvoidanceVector: THREE.Vector2;  //避障力向量
+  obstacleAvoidanceCalCount: number = 0;  //避障力计算计数（每3帧算一次）
+  unitVector: THREE.Vector2;              //给定方向向量
 
   shadowOffset: Vec2;   //足坐标偏移
+  tilePosition: THREE.Vector2;     //中心地块坐标
 
   hugeEnemy: boolean = false;    //是否是巨型敌人
   unMoveable: boolean = false;   //是否可移动
@@ -51,64 +103,65 @@ class Enemy{
   route: EnemyRoute;
   checkpoints: CheckPoint[];
   checkPointIndex: number = 0;   //目前处于哪个检查点
+  visualRoutes: any;             //可视化路线
 
-  SPFA: SPFA;
-  targetNode: PathNode;  //寻路目标点
+  nextNode: PathNode;  //寻路目标点
   
   currentSecond: number = 0;      //敌人的当前时间
 
   public countdown: Countdown;  //倒计时
+  public watchers: Watcher[] = [];
 
   isStarted: boolean = false;
   isFinished: boolean = false;
   exitCountDown: number = 0;   //隐藏spine的渐变倒计时
 
-  private rush;
-
   public exit: boolean = false;
-  private skeletonData: any;     //骨架数据
-  public skeletonMesh: any;
-  public spine: THREE.Object3D;
+
   public shadow: THREE.Mesh;
+  public activeShadow: THREE.Mesh;
   public shadowHeight: number = 0.2;
   public attackRangeCircle: THREE.Line;         //攻击范围的圈
   
   //视图层面会修改到的选项
   public options = {
-    _attackRangeVisible: false,
-    _countDownVisible: true
+    AttackRangeVisible: null,
+    CountDownVisible: null,
+    RoutesVisible: null,         //是否可见路线
+
+    attackRangeVisible: false,
+    countDownVisible: true,
+    routesVisible: false         //是否可见路线
   }
 
-  public skelOffset: Vec2;                //模型偏移
-  public skelSize: Vec2;                //模型宽高
-  public skeletonZOffset: number = 0;             //模型Z轴位移
 
-  private animateState: string = "idle";  //当前处于什么动画状态 idle/move
-  private moveAnimate: string;   //skel 移动的动画名
-  private idleAnimate: string;   //skel 站立的动画名
+  public object: THREE.Object3D;
+
+  protected animateState: string = "idle";  //当前处于什么动画状态 idle/move
+  protected animations: any[];
+  public moveAnimate: string;   //移动的动画名
+  public idleAnimate: string;   //站立的动画名
+  public meshOffset: Vec2;                //模型偏移
+  public meshSize: Vec2;                //模型宽高
+  protected ZOffset: number = 0;             //模型Z轴位移
+  protected animationScale: number = 1.0;  //动画执行速率
+  public hasBirthAnimation: boolean = false; //是否有出生动画
   public simulateTrackTime: number;      //动画执行time
-
-  public gameManager: GameManager;
-  public waveManager: WaveManager;
   
-  constructor(action: ActionData, gameManager: GameManager){
-    this.gameManager = gameManager;
-    this.tileManager = gameManager.tileManager;
-    this.SPFA = gameManager.SPFA;
+  constructor(action: ActionData){
 
     this.enemyData = action.enemyData;
     this.startTime = action.startTime;
     this.fragmentTime = action.fragmentTime;
-    this.waveTime = action.waveTime;
 
     const {
       key, levelType, motion, name, description, icon, applyWay, unMoveable, hugeEnemy,
-      attributes, notCountInTotal, talents, skills, attrChanges
+      attributes, notCountInTotal, talents, skills, attrChanges, animations, moveAnimate, idleAnimate
     } = this.enemyData;
 
     this.key = key;
     this.levelType = levelType;
-    this.motion = checkEnemyMotion(this.key, motion);
+
     this.name = name;
     this.description = description;
     this.applyWay = applyWay;
@@ -126,14 +179,13 @@ class Enemy{
     // this.attributes["attackSpeed"] = attributes.baseAttackTime * 100 / attributes.attackSpeed;
     
     this.route = action.route;
-
     this.checkpoints = [...this.route.checkpoints];
 
     this.position = new THREE.Vector2();
     this.acceleration = new THREE.Vector2(0, 0);
     this.inertialVector = new THREE.Vector2(0, 0);
     this.velocity = new THREE.Vector2(0, 0);
-    this.targetNode = null;
+    this.nextNode = null;
 
     //敌人阴影往下偏移
     this.shadowOffset  = {
@@ -143,12 +195,17 @@ class Enemy{
 
     this.initOptions();
 
-    const countdownManager = this.gameManager.countdownManager;
+    const countdownManager = Global.countdownManager;
     this.countdown = countdownManager.getCountdownInst();
+
+    this.animations = animations;
+    this.moveAnimate = moveAnimate;
+    this.idleAnimate = idleAnimate;
   }
 
   public start(){
     this.reset();
+    this.handleBirthAnimation();
     this.handleTalents();
     this.handleSkills();
     this.isStarted = true;
@@ -163,7 +220,7 @@ class Enemy{
     );
     this.isStarted = false;
     this.isFinished = false;
-    this.targetNode = null;
+    this.nextNode = null;
     this.animateState = 'idle';
     this.changeAnimation();
     this.changeCheckPoint(0)
@@ -178,7 +235,17 @@ class Enemy{
 
   public setPosition(x:number, y: number){
     this.position.set(x, y);
-    this.setSpinePosition(x, y);
+    this.setObjectPosition(x, y);
+  }
+
+  public setObjectPosition(x: number, y: number){
+    if(Global.gameManager.isSimulate || !this.object) return;
+
+    const Vec2 = Global.gameManager.getCoordinate(x, y);
+
+    this.object.position.x = Vec2.x;
+    this.object.position.y = Vec2.y;
+
   }
 
   public setVelocity(velocity: THREE.Vector2){
@@ -205,7 +272,10 @@ class Enemy{
   //到达终点，退出地图
   public finishedMap(){
     this.isFinished = true;
-    if(!this.gameManager.isSimulate){
+    EnemyHandler.finishedMap(this);
+    
+    if(!Global.gameManager.isSimulate){
+      this.options.RoutesVisible = false;
       //敌人退出地图的渐变
       this.gradientHide();
     }else{
@@ -213,98 +283,17 @@ class Enemy{
     }
   }
 
-  //初始化spine小人
-  public initSpine(){
-    //显示相关的数据为异步加载数据，会晚于构造函数调用
-    const {skeletonData, moveAnimate, idleAnimate} = this.enemyData;
-    if(!skeletonData) return;
+  public initMesh(){
+    this.object = new THREE.Object3D();
+    GC_Add(this.object);
 
-    this.skeletonData = skeletonData;
-
-    this.moveAnimate = moveAnimate;
-    this.idleAnimate = idleAnimate;
-
-    this.spine = new THREE.Object3D();
-
-    GC_Add(this.spine);
-    //从数据创建SkeletonMesh并将其附着到场景
-    this.skeletonMesh = new spine.threejs.SkeletonMesh(this.skeletonData, function(parameters) {
-      //不再进行深度检测，避免skel骨架和其他物体重叠时导致渲染异常的现象
-      //重叠时显示哪个用mesh的renderOrder属性控制
-			parameters.depthWrite = false;
-		}); 
-
-    this.spine.add(this.skeletonMesh);
-    
-    const offsetY = this.motion === "WALK"? -1/4 : 0;
-    const coordinateOffset = this.gameManager.getCoordinate(0, offsetY)
-    
-    this.skeletonMesh.position.x = coordinateOffset.x;
-    this.skeletonMesh.position.y = coordinateOffset.y;
-
-    const spineScale = getSpineScale(this);
-    this.spine.scale.set(spineScale,spineScale,1);
-
-    this.idle();
-
-    this.skeletonMesh.rotation.x = GameConfig.MAP_ROTATION;
-    this.skeletonMesh.position.z = this.motion === "WALK"? 
-      this.gameManager.getPixelSize( 1/7 + this.skeletonZOffset) : this.gameManager.getPixelSize( 10/7);
-
-    this.getSkelSize();
     this.initShadow();
     this.initAttackRangeCircle();
-
-    this.changeAnimation();
-    //初始不可见的
-    this.hide();
-  }
-
-  public setSpinePosition(x: number, y: number){
-    if(this.gameManager.isSimulate || !this.spine) return;
-
-    const Vec2 = this.gameManager.getCoordinate(x, y);
-
-    this.spine.position.x = Vec2.x;
-    this.spine.position.y = Vec2.y;
-
-    this.skeletonMesh.renderOrder = -y;
-
-    //todo
-    // this.skeletonMesh.zOffset = 0.1;
-  }
-
-  //获取skel的大小，是实时运算出来的
-  getSkelSize(){ 
-    this.skelOffset = getSkelOffset(this);
-    const skelSize = new THREE.Vector2();
-    const skelOffset = new THREE.Vector2();
-
-    this.skeletonMesh.skeleton.updateWorldTransform();
-    this.changeAnimation();
-    this.skeletonMesh.update(1)
-    this.skeletonMesh.state.apply(this.skeletonMesh.skeleton);
-    this.skeletonMesh.skeleton.getBounds(skelOffset, skelSize, [])
-
-    const offsetX = -(skelOffset.x + skelSize.x / 2);
-    const offsetY = -(skelOffset.y + skelSize.y / 2);
-
-    this.skelOffset.y += offsetY * 6;
-    this.skelSize = skelSize.multiplyScalar(getSpineScale(this));
-
-    //恢复track的动画帧
-    const track = this.skeletonMesh.state.getCurrent(0);
-    track.trackTime = 0;
-
-    // console.log(this.name)
-    // console.log(`动态边界尺寸: ${this.skelSize.x} x ${this.skelSize.y}`);
-    // console.log(`边界偏移量: (${offsetX}, ${offsetY})`);
-
   }
 
   initShadow(){
-    const majorAxis = this.gameManager.getPixelSize(0.35); //椭圆长轴
-    const minorAxis = this.gameManager.getPixelSize(0.08); //椭圆短轴
+    const majorAxis = Global.gameManager.getPixelSize(0.35); //椭圆长轴
+    const minorAxis = Global.gameManager.getPixelSize(0.08); //椭圆短轴
 
     const path = new THREE.Shape();
     path.absellipse(
@@ -316,25 +305,30 @@ class Enemy{
     );
 
     const geometry = new THREE.ShapeBufferGeometry( path );
-    const material = new THREE.MeshBasicMaterial( { 
-      color: "#000000",
-      transparent: true, // 启用透明度
-      opacity: 0.8 // 设置透明度
-    } );
-    const shadow = new THREE.Mesh( geometry, material );
 
+
+    const shadow = new THREE.Mesh( geometry, Enemy.shadowMaterial );
     this.shadow = shadow;
+    const activeShadow = new THREE.Mesh( geometry, Enemy.activeShadowMaterial );
+    this.activeShadow = activeShadow;
+    this.activeShadow.visible = false;
+
     shadow.position.z = this.shadowHeight;
+    activeShadow.position.z = this.shadowHeight;
     
-    const shadowOffset = this.gameManager.getCoordinate(this.shadowOffset);
+    const shadowOffset = Global.gameManager.getCoordinate(this.shadowOffset);
     shadow.position.x = shadowOffset.x;
     shadow.position.y = shadowOffset.y;
-    this.spine.add(shadow)
+
+    activeShadow.position.x = shadowOffset.x;
+    activeShadow.position.y = shadowOffset.y;
+    this.object.add(shadow)
+    this.object.add(activeShadow)
   }
 
   initAttackRangeCircle(){
     if(this.isRanged()){
-      const radius = this.gameManager.getPixelSize(this.attributes.rangeRadius);
+      const radius = Global.gameManager.getPixelSize(this.attributes.rangeRadius);
       const curve = new THREE.EllipseCurve(
         0,  0,            // ax, aY
         radius, radius,           // xRadius, yRadius
@@ -363,7 +357,7 @@ class Enemy{
       this.attackRangeCircle.renderOrder = 100;
       this.attackRangeCircle.position.z = 0;
       this.attackRangeCircle.visible = false;
-      this.spine.add(this.attackRangeCircle)
+      this.object.add(this.attackRangeCircle)
     }
 
   }
@@ -378,11 +372,11 @@ class Enemy{
 
   //飞行单位根据是否在高台，修改阴影高度
   updateShadowHeight(){
-    if(this.gameManager.isSimulate || !this.isFly()) return;
+    if(Global.gameManager.isSimulate || !this.isFly()) return;
     
     const x = Math.round(this.position.x);
     const y = Math.round(this.position.y);
-    const currentTile = this.tileManager.getTile(x, y);
+    const currentTile = Global.tileManager.getTile(x, y);
     if( currentTile.passableMask === "ALL" ){
       //地面
       this.shadow.position.z = this.shadowHeight
@@ -395,12 +389,129 @@ class Enemy{
 
   }
 
+  private getClosePoints(){
+    const footPoint = new THREE.Vector2(
+      this.position.x, this.position.y - 0.2
+    );
+    const left = new THREE.Vector2(
+      footPoint.x - 0.2, footPoint.y
+    );
+    const right = new THREE.Vector2(
+      footPoint.x + 0.2, footPoint.y
+    );
+
+    return {
+      left, middle: footPoint, right
+    }
+  }
+
+  public getRoundTile(){
+    const x = this.tilePosition.x;
+    const y = this.tilePosition.y;
+    const tileManager = Global.gameManager.tileManager;
+    return {
+      leftTop: tileManager.getTile(x-1, y+1),
+      top: tileManager.getTile(x, y+1),
+      rightTop: tileManager.getTile(x+1, y+1),
+      left: tileManager.getTile(x-1, y),
+      right: tileManager.getTile(x+1, y),
+      leftBottom: tileManager.getTile(x-1, y-1),
+      bottom: tileManager.getTile(x, y-1),
+      rightBottom: tileManager.getTile(x+1, y-1),
+    }
+  }
+
+  //计算避障力
+  public handleObstacleAvoidance(){
+    const closePoints = this.getClosePoints();
+    const roundTile = this.getRoundTile();
+
+    const avoidances = new THREE.Vector2();
+    Object.keys(roundTile).forEach(key => {
+      let closePoint: THREE.Vector2;
+      const tile: Tile = roundTile[key];
+      if(tile && !tile.isPassable()){
+        
+        switch (key) {
+          case "leftTop":
+          case "left":
+          case "leftBottom":
+            closePoint = closePoints.left;
+            break;
+          case "top":
+          case "bottom":
+            closePoint = closePoints.middle;
+            break;
+          case "rightTop":
+          case "right":
+          case "rightBottom":
+            closePoint = closePoints.right;
+            break;
+        }
+
+        //最近点坐标-中心地块坐标
+        const vec1 = closePoint.clone().addScaledVector(this.tilePosition, -1);
+
+        //地块相对坐标:不可通行地块坐标-中心地块坐标
+        const vec2 = tile.position.clone().addScaledVector(this.tilePosition, -1);
+        const offsetVec = new THREE.Vector2(
+          (Math.max(vec1.x * vec2.x, 0) - 0.25) * Math.abs(vec2.x),
+          (Math.max(vec1.y * vec2.y, 0) - 0.25) * Math.abs(vec2.y)
+        );
+
+
+
+        const avoidance = new THREE.Vector2(0, 0);
+
+        switch (key) {
+          case "left":
+          case "right":
+          case "top":
+          case "bottom":
+            if(offsetVec.x > 0 || offsetVec.y > 0){
+              avoidance.x = - offsetVec.x * vec2.x;
+              avoidance.y= - offsetVec.y * vec2.y;
+            }
+            break;
+          case "leftTop":
+          case "leftBottom":
+          case "rightTop":
+          case "rightBottom":
+            if(offsetVec.x > 0 && offsetVec.y > 0){
+              const Average = -(offsetVec.x + offsetVec.y) / 2;
+              avoidance.x = Average * vec2.x;
+              avoidance.y = Average * vec2.y;
+            }
+            break;
+        }
+
+        avoidances.x = avoidances.x + avoidance.x;
+        avoidances.y = avoidances.y + avoidance.y;
+      }
+    })
+
+    let projection;
+    avoidances.normalize();
+    
+    projection = this.unitVector.clone().multiplyScalar(avoidances.dot(this.unitVector));;
+
+    this.obstacleAvoidanceVector = avoidances.addScaledVector(projection, -1);
+  }
+
   public update(delta: number){
     if(this.isFinished) return;
 
+    this.obstacleAvoidanceCalCount = Math.max(this.obstacleAvoidanceCalCount - 1, 0);
+    this.updateAttrs();
+    this.updateAction(delta);
+
+    const watcherFuncs = this.watchers.map(watcher => watcher.function);
+    watcherFuncs.forEach(watcherFunc => watcherFunc());
+  }
+
+  private updateAction(delta: number) {
     //模拟动画时间
     this.currentSecond += delta;
-    this.handleRush();
 
     this.simulateTrackTime += this.deltaTrackTime(delta);
 
@@ -411,17 +522,25 @@ class Enemy{
     
     switch (type) {
       case "MOVE":  
+
+        if(this.countdown.getCountdownTime("waitAnimationTrans") > 0) return;
+
         //部分0移速的怪也有移动指令，例如GO活动的装备
         if(this.unMoveable || this.attributes.moveSpeed === 0){
           return;
         }
-        
+
+        this.tilePosition = new THREE.Vector2(
+          Math.floor(this.position.x + 0.5),
+          Math.floor(this.position.y + 0.5)
+        )
+
         const currentPosition = this.position;
 
-        const currentNode = this.SPFA.getPathNode(
+        const currentNode = Global.SPFA.getPathNode(
           this.currentCheckPoint().position,
           this.motion,
-          currentPosition
+          this.tilePosition
         );
 
         if(!currentNode){
@@ -431,65 +550,74 @@ class Enemy{
           this.motion = "FLY";
           this.notCountInTotal = true;
           this.action.dontBlockWave = true;
-            const tile = this.tileManager.getTile(this.getIntPosition());
-            this.skeletonZOffset = tile.height;
+            const tile = Global.tileManager.getTile(this.getIntPosition());
+            this.ZOffset = tile.height;
 
-          if(this.skeletonMesh){
-            this.skeletonMesh.position.z = this.gameManager.getPixelSize(this.skeletonZOffset);
+          if(this.object){
+            this.object.position.z = Global.gameManager.getPixelSize(this.ZOffset);
           }
           return;
         }
-        //核心逻辑：目标地块一直是当前光标地块的nextNode，当前为终点目标地块则为光标地块
-        //但是如果新地块是上个地块的nextNode，就进入新地块中心0.25半径再切换到新地块的nextNode  
-        if(
-          //兼容第一次执行的情况
-          this.targetNode === null ||
-          //是否到达新地块用this.targetNode !== currentNode.nextNode 判断，意思是当前目标node不是光标地块的nextNode
-          //到达新地块，并且新地块不是上个地块的nextNode：直接将targetNode切换为新地块的nextNode
-          (this.targetNode !== currentNode.nextNode && this.targetNode !== currentNode)
-        ){
 
-          //如果currentNode没有nextNode，就是检查点终点
-          this.targetNode = currentNode.nextNode ? currentNode.nextNode : currentNode;
-        }
+        this.updateNextNode(currentNode);
 
-        let {position, nextNode} = this.targetNode;
+        let {position, nextNode} = this.nextNode;
         let targetPos = new THREE.Vector2(position.x,position.y);
 
-        let arrivalDistance = 0.05; //距离下个地块中心多少距离后才会更改方向
         //当前地块没有nextnode，意为当前就是该检查点终点
         if(nextNode === null){
           //nextNode为null时，目前为检查点终点，这时候就要考虑偏移(reachOffset)了
           targetPos.x += reachOffset.x;
           targetPos.y += reachOffset.y;
-        }else{
-          //若自身光标坐标进入了经过的前一地块的nextNode,
-          //但还未到达此地块中心0.25半径范围内，则目标仍然为当前光标坐标所在地块中心
-          arrivalDistance = 0.25;
         }
-
+        
         // const roundX = Math.round(currentPosition.x)
         // const roundY = Math.round(currentPosition.y)
 
         // //光标距离最近地块中心的长度
         // const distanceToCenter = currentPosition.distanceTo(new THREE.Vector2(roundX, roundY))
         // console.log(distanceToCenter)
-        
-        //移动单位向量
-        const unitVector = new THREE.Vector2(
+
+        //给定方向向量
+        this.unitVector = new THREE.Vector2(
           targetPos.x - currentPosition.x,
           targetPos.y - currentPosition.y
         ).normalize();
 
-        // const simulateDistance = unitVector
-        //   .clone()
-        //   .multiplyScalar(this.actualSpeed())
-        //   .add(currentPosition)
-        //   .distanceTo(targetPos)
+        //计算当前移速
+        this.updateCurrentFrameSpeed();
+        const actualSpeed = this.currentFrameSpeed * 0.5;
 
-        // if(simulateDistance <= arrivalDistance){
-        //   console.log("能到达！")
-        // }
+        //todo 重复代码
+        const simVelocity = this.unitVector.clone().multiplyScalar(actualSpeed * delta);
+        const simDistanceToTarget = currentPosition.distanceTo(targetPos);
+        if(simVelocity.length() >= simDistanceToTarget){
+          this.position = targetPos.clone();
+          this.velocity = simVelocity;
+          this.nextNode = this.nextNode?.nextNode;
+
+          //完成最后一个寻路点
+          if( this.nextNode === null || this.nextNode === undefined ){
+            this.nextCheckPoint();
+          }
+          this.changeFaceToward();
+          this.updateShadowHeight();
+          break;
+        }
+        //end 重复代码
+
+        if(this.obstacleAvoidanceCalCount === 0){
+          //计算避障力
+          this.handleObstacleAvoidance();
+          this.obstacleAvoidanceCalCount = 3;
+        }
+
+        //实际避障力
+        const actualAvoidance = this.obstacleAvoidanceVector
+          .clone()
+          .multiplyScalar( 
+            Math.max(this.inertialVector.length() / actualSpeed, 0.5)
+          );
 
         //计算本帧位移需额外施加的加速度向量(也可以视为力，质量为1)：
         //加速度 = ClampMagnitude((给定方向 * 理论移速 - 惯性向量) * steeringFactor + 实际避障力, maxSteeringForce)。
@@ -500,12 +628,14 @@ class Enemy{
         const steeringFactor = isWalk? 8 : 20;
         const maxSteeringForce = isWalk? 10 : 100;
         //加速度
-        this.acceleration = unitVector
+        this.acceleration = this.unitVector 
           .clone()
-          .multiplyScalar(this.actualSpeed())
+          .multiplyScalar(actualSpeed)
           .addScaledVector(this.inertialVector, -1)
-          .multiplyScalar(steeringFactor * this.gameManager.gameSpeed)
-          .clampLength(0, maxSteeringForce * this.gameManager.gameSpeed)
+          .multiplyScalar(steeringFactor)
+          .add(actualAvoidance)
+          .clampLength(0, maxSteeringForce)
+
 
         //再根据加速度计算本帧的移动速度向量：
         //移动速度向量 = ClampMagnitude(加速度 * 帧间隔 + 惯性向量, 理论移速)。
@@ -513,34 +643,39 @@ class Enemy{
         //在得到移动速度向量后，将此向量储存至惯性向量，供下一轮计算使用。
         const moveSpeedVec = this.acceleration
           .clone()
-          .multiplyScalar(1 / GameConfig.FPS )
+          .multiplyScalar(delta )
           .add(this.inertialVector)
-          .clampLength(0, this.actualSpeed())
+          .clampLength(0, actualSpeed)
         
         this.inertialVector = moveSpeedVec;
-        
+
+
+          
         //最后用移动速度向量 * 帧间隔即可得到本帧的位移向量。
         const velocity = moveSpeedVec
           .clone()
-          .multiplyScalar( 1 / GameConfig.FPS * this.gameManager.gameSpeed);
+          .multiplyScalar( delta);
+
+
+        // const velocity = this.unitVector.clone().multiplyScalar(actualSpeed * perFrame);
 
         this.setVelocity(velocity);
         this.move();
+          
+        const distanceToTarget = currentPosition.distanceTo(targetPos);
+
+        //到达检查点终点
+        if( distanceToTarget <= 0.05 &&
+          (this.nextNode === null || this.nextNode === undefined)
+        ){
+
+          this.nextCheckPoint();
+        }
+
         this.changeFaceToward();
         this.updateShadowHeight();
 
-        const distanceToTarget = currentPosition.distanceTo(targetPos);
 
-
-        //第二种切换targetNode的逻辑，进入目标点中心一定范围
-        if( distanceToTarget <= arrivalDistance ){
-          this.targetNode = this.targetNode?.nextNode;
-
-          //完成最后一个寻路点
-          if( this.targetNode === null || this.targetNode === undefined ){
-            this.nextCheckPoint();
-          }
-        }
 
         // console.log(actionEnemy.position)
         break;
@@ -549,26 +684,13 @@ class Enemy{
       case "WAIT_FOR_PLAY_TIME":             //等待至游戏开始后的固定时刻
       case "WAIT_CURRENT_FRAGMENT_TIME":     //等待至分支(FRAGMENT)开始后的固定时刻
       case "WAIT_CURRENT_WAVE_TIME":         //等待至波次(WAVE)开始后的固定时刻
-        let countDownTime = 0;
-        switch (type){
-          case "WAIT_FOR_SECONDS":
-            countDownTime = time;
-            break;
-          case "WAIT_FOR_PLAY_TIME":
-            countDownTime = time - this.waveManager.gameSecond; 
-            break;
-          case "WAIT_CURRENT_FRAGMENT_TIME":
-            countDownTime = time - this.waveManager.waveSecond + this.fragmentTime;
-            break;
-          case "WAIT_CURRENT_WAVE_TIME": 
-            countDownTime = time - this.waveManager.waveSecond + this.waveTime;
-            break;
-        }
-        
-        this.countdown.addCountdown("checkPoint", countDownTime, () => {
-          this.nextCheckPoint();
+        this.countdown.addCountdown({
+          name: "checkPoint",
+          initCountdown: this.getWaitTime(type, time),
+          callback: () => {
+            this.nextCheckPoint();
+          }
         });
-        
         break;
 
       case "DISAPPEAR":
@@ -592,155 +714,220 @@ class Enemy{
     }
 
     this.velocity.x = 0;
-    this.velocity.y = 0;
-
+    this.velocity.y = 0; 
   }
 
-  //视图相关的更新
-  public render(delta: number){
+  private updateNextNode(currentNode: PathNode){
+    if(this.route.visitEveryTileCenter){
+      
+    }else if(this.route.visitEveryNodeCenter || this.route.visitEveryNodeStably){
+      if(
+        //兼容第一次执行的情况
+        this.nextNode === null ||
+        //当前nextNode既不是当前光标地块，也不是当前光标地块的nextNode，直接切换nextNode
+        (this.nextNode !== currentNode.nextNode && this.nextNode !== currentNode)
+      ){
+        //如果currentNode没有nextNode，就是检查点终点
+        this.nextNode = currentNode.nextNode ? currentNode.nextNode : currentNode;
+      }else if(this.nextNode === currentNode){
+        const arriveDistance = this.route.visitEveryNodeCenter? 0.05 : 0.25;
+        //检查点终点
+        if(currentNode.nextNode === null) return;
 
-    if(!this.gameManager.isSimulate){
-      this.handleGradient();
+        //若自身光标坐标进入了经过的前一地块的nextNode，但还未到达此地块中心0.25半径范围内，则目标仍然为当前光标坐标所在地块中心
+        const distance = this.position.distanceTo(currentNode.position as THREE.Vector2);
 
-      //锁定spine朝向向相机，防止梯形畸变
-      this.skeletonMesh.lookAt(gameCanvas.camera.position);
+        if(distance <= arriveDistance){
+          this.nextNode = currentNode.nextNode;
+        }
 
-      if(this.isStarted && !this.isFinished){
-        this.skeletonMesh.update(
-          this.deltaTrackTime(delta)
-        )
       }
+    }else{
+      this.nextNode = currentNode.nextNode ? currentNode.nextNode : currentNode;
     }
 
   }
 
-  private deltaTrackTime(delta: number): number{
-    return  delta * 
-      Math.min(this.speedRate(), 4) * 
-      getAnimationSpeed(this.key);
+  private getWaitTime(type: string, time: number): number{
+    let countDownTime = 0;
+    switch (type){
+      case "WAIT_FOR_SECONDS":
+        countDownTime = time;
+        break;
+      case "WAIT_FOR_PLAY_TIME":
+        countDownTime = time - Global.waveManager.gameSecond; 
+        break;
+      case "WAIT_CURRENT_FRAGMENT_TIME":
+        countDownTime = time - Global.waveManager.waveSecond + this.fragmentTime;
+        break;
+      case "WAIT_CURRENT_WAVE_TIME": 
+        countDownTime = time - Global.waveManager.waveSecond;
+        break;
+    }
+
+    return countDownTime;
+  }
+
+  protected handleTrackTime(trackTime: number){}
+
+  //视图相关的更新
+  public render(delta: number){}
+
+  protected deltaTrackTime(delta: number): number{
+    const animationSpeed = getAnimationSpeed(this.key);
+    const speedRate = animationSpeed === 1? 1 : this.speedRate();
+    //只有更改了animationSpeed的敌人 需要通过当前移速修改动画速率
+    return  delta * this.animationScale *
+      Math.min(speedRate, 4) * 
+      animationSpeed;
   }
 
   //视图层面的设置
   private initOptions(){
 
-    Object.defineProperty(this.options, 'attackRangeVisible', {
+    Object.defineProperty(this.options, 'AttackRangeVisible', {
       get: () => {
-        return this.options._attackRangeVisible;
+        return this.options.attackRangeVisible;
       },
       set: (value) => {
         if(this.attackRangeCircle){
-          this.options._attackRangeVisible = value;
+          this.options.attackRangeVisible = value;
           this.attackRangeCircle.visible = value;
         }
       }
     });
 
-    Object.defineProperty(this.options, 'countDownVisible', {
+    Object.defineProperty(this.options, 'CountDownVisible', {
       get: () => {
-        return this.options._countDownVisible;
+        return this.options.countDownVisible;
       },
       set: (value) => {
-        this.options._countDownVisible = value;
+        this.options.countDownVisible = value;
+      }
+    });
+
+    Object.defineProperty(this.options, 'RoutesVisible', {
+      get: () => {
+        return this.options.routesVisible;
+      },
+      set: (value) => {
+        const change = this.options.routesVisible !== value;
+
+        if(change){
+          this.options.routesVisible = value;
+
+          //更改阴影颜色
+          this.activeShadow.visible = value;
+          this.shadow.visible = !value;
+
+          if(this.options.routesVisible){
+            eventBus.emit("changeSVGRoute", this.visualRoutes);
+          }else{
+            eventBus.emit("changeSVGRoute", []);
+          }
+        }
+
       }
     });
 
   }
 
-  //移速倍率
-  public speedRate(): number{
-    let speedRate = 1;
-    const values = Object.values(this.moveSpeedAddons);
-    if(values.length > 0){
-      speedRate = Object.values(this.moveSpeedAddons).reduce((prev, key) => prev * key);
-    }
-    
-    return speedRate;
+  private resetFinalAttributes(){
+    this.finalAttributes.atk = this.attributes.atk;
+    this.finalAttributes.attackSpeed = this.attributes.attackSpeed;
+    this.finalAttributes.baseAttackTime = this.attributes.baseAttackTime;
+    this.finalAttributes.def = this.attributes.def;
+    this.finalAttributes.hpRecoveryPerSec = this.attributes.hpRecoveryPerSec;
+    this.finalAttributes.magicResistance = this.attributes.magicResistance;
+    this.finalAttributes.massLevel = this.attributes.massLevel;
+    this.finalAttributes.maxHp = this.attributes.maxHp;
+    this.finalAttributes.moveSpeed = this.attributes.moveSpeed;
+    this.finalAttributes.rangeRadius = this.attributes.rangeRadius;
   }
 
-  //实际移速
-  public actualSpeed(): number{
-    return this.attributes.moveSpeed * this.speedRate() * 0.5;
+  private updateAttrs(){
+    this.resetFinalAttributes();
+    const muls = {
+      atk: 1, attackSpeed: 1, baseAttackTime: 1, def: 1, hpRecoveryPerSec: 1,
+      magicResistance: 1, massLevel: 1, maxHp: 1, moveSpeed: 1, rangeRadius: 1,
+    }
+    const adds = {
+      atk: 0, attackSpeed: 0, baseAttackTime: 0, def: 0, hpRecoveryPerSec: 0,
+      magicResistance: 0, massLevel: 0, maxHp: 0, moveSpeed: 0, rangeRadius: 0,
+    }
+
+    const applyedKeys = [];
+    this.buffs.forEach(buff => {
+      if(buff.overlay === false){
+        if(applyedKeys.includes(buff.key)) return;
+        applyedKeys.push(buff.key);
+      }
+
+      buff.effect?.forEach(effect => {
+        if(effect.method === "add"){
+          adds[effect.attrKey] += effect.value;
+        }else if(effect.method === "mul"){
+          muls[effect.attrKey] *= effect.value;
+        }
+      })
+    })
+
+    for (let attrKey in muls){
+      this.finalAttributes[attrKey] *= muls[attrKey];
+    }
+
+    for (let attrKey in adds){
+      this.finalAttributes[attrKey] += adds[attrKey];
+    }
+  }
+
+  public getAttr(attrName: string){
+    if(attrName === "moveSpeed") {
+      return this.finalAttributes[attrName] * this.gractrlSpeed; 
+    }
+    return this.finalAttributes[attrName];
+  }
+
+  public addBuff(buff: Buff){
+    Global.gameBuff.addEnemyBuff(this, buff);
+  }
+
+  public removeBuff(id: string){
+    Global.gameBuff.removeEnemyBuff(this, id);
+  }
+
+  public updateCurrentFrameSpeed(){
+    //计算特殊buff，在不同的更新周期中执行
+    //例如重力影响速度，需要在计算速度之前先读取buffs
+    EnemyHandler.updateBuffAfterUnitVector(this);
+    this.currentFrameSpeed = this.getAttr("moveSpeed");
+  }
+
+  //移速倍率
+  public speedRate(): number{
+    return this.currentFrameSpeed / this.attributes.moveSpeed;
+  }
+
+
+  private handleBirthAnimation(){
+    EnemyHandler.handleBirthAnimation(this);
   }
 
   private handleTalents(){
-    // if(this.talents) console.log(this.talents)
     this.talents?.forEach(talent => {
-      const {move_speed, interval, duration, trig_cnt, unmove_duration} = talent.value;
-      let waitTime;
-      switch (talent.key) {
-        case "rush":
-          if(move_speed && interval && trig_cnt){
-            this.rush = talent.value;
-          }
-          
-          break;
-        case "revive":   //萨卡兹魔剑士、恶咒者
-        case "sleepwalking": //钵海收割者
-          if( unmove_duration ){
-            this.checkpoints.unshift({
-              position: null,
-              reachOffset: null,
-              randomizeReachOffset: null,
-              time: unmove_duration,
-              type: "WAIT_FOR_SECONDS"
-            })
-          }
-          break;
-        case "wait": //念旧
-        case "sleep": //驮兽
-          waitTime = duration || interval;
-          const callback = () => {};
-          if( waitTime ){
-            this.countdown.addCountdown("checkPoint", waitTime, () => {
-              switch (this.key) {
-                //念旧
-                case "enemy_10057_cjstel":
-                case "enemy_10057_cjstel_2":
-                  this.motion = "FLY"
-                  break;
-              }
-            });
-
-          }
-
-
-          break;
-        case "timeup":  //prts 岁相等
-          waitTime = duration || interval;
-          if(waitTime){
-            this.countdown.addCountdown("end", waitTime - this.waveManager.gameSecond, () => {
-              this.finishedMap();
-            });
-          }
-            
-          break;
-      }
+      EnemyHandler.handleTalent(this, talent);
     })
   }
 
   private handleSkills(){
     // if(this.skills.length > 0) console.log(this.skills)
-
+    
     this.skills?.forEach(skill => {
-      switch (skill.prefabKey) {
-        case "doom":
-          let countdown =  skill.initCooldown;
-          if(this.key === "enemy_1521_dslily"){
-            //昆图斯需要加上前两个阶段的时间
-            const growup1 = this.getTalent("growup1");
-            const growup2 = this.getTalent("growup2");
-            countdown += growup1.interval + growup2.interval;
-          }
-          this.countdown.addCountdown("end", countdown, () => {
-            this.finishedMap();
-          })
-          break;
-
-      }
+      EnemyHandler.handleSkill(this, skill);
     });
   }
 
-  private getTalent(key: string){
+  public getTalent(key: string){
     const find = this.talents.find(talent => talent.key === key);
     return find? find.value : null;
   }
@@ -750,35 +937,31 @@ class Enemy{
     return find? find : null;
   }
 
-  private handleRush(){
-    if(this.rush){
-      const {move_speed, interval, trig_cnt, predelay} = this.rush;
-      const trigNum = 
-      Math.min(
-        Math.max(
-          Math.round((this.currentSecond - (predelay||0)) /  interval), 
-          0
-        ), 
-        trig_cnt
-      );
-      this.moveSpeedAddons.rush = trigNum * move_speed + 1;
+  public addWatcher(watcher: Watcher){
+    this.watchers.push(watcher);
+  }
+
+  public removeWatcher(name: string){
+    const index = this.watchers.findIndex(watcher => watcher.name === name);
+    if(index > -1){
+      this.watchers.splice(index, 1);
     }
   }
 
   public show(){
     this.exit = false;
-    if(!this.gameManager.isSimulate) this.spine.visible = true;
+    if(!Global.gameManager.isSimulate && this.object) this.object.visible = true;
   }
 
   public hide(){  
     this.exit = true;
-    if(!this.gameManager.isSimulate) this.spine.visible = false;
+    if(!Global.gameManager.isSimulate && this.object) this.object.visible = false;
   }
 
-  //渐变退出
+  //渐变退出，用exitCountDown时间控制（不同的子类有不同的实现方法）
   private gradientHide(){  
     this.exit = true;
-    if(!this.gameManager.isSimulate) {
+    if(!Global.gameManager.isSimulate) {
       this.exitCountDown = 1;
     }
   }
@@ -787,44 +970,13 @@ class Enemy{
     return this.isStarted && !this.exit;
   }
 
-  private handleGradient(){
-    const color = this.skeletonMesh.skeleton.color;
-    if(this.exit){
-      //退出渐变处理
-      if(this.exitCountDown > 0){
-        color.r = 0;
-        color.g = 0;
-        color.b = 0;
-        color.a = this.exitCountDown;
-        this.exitCountDown -= 0.1;
-        
-        this.skeletonMesh.update(0)
-      }else{
-        this.hide();
-        color.r = 1;
-        color.g = 1;
-        color.b = 1;
-        color.a = 1;
-      }
-    }else{
-      color.r = 1;
-      color.g = 1;
-      color.b = 1;
-      color.a = 1;
-    }
-  }
-
-
   //根据速度方向更换spine方向
-  private changeFaceToward(){
+  protected changeFaceToward(){
     if(this.velocity.x > 0.001) this.faceToward = 1;
     if(this.velocity.x < -0.001) this.faceToward = -1;
-    
-
-    if(!this.gameManager.isSimulate) this.skeletonMesh.scale.x = this.faceToward;
   }
 
-  private idle(){
+  protected idle(){
     const prevAnimate = this.animateState;
     this.animateState = "idle";
 
@@ -833,7 +985,7 @@ class Enemy{
     }
   }
 
-  private move(){
+  protected move(){
     this.setPosition(
       this.position.x + this.velocity.x,
       this.position.y + this.velocity.y
@@ -848,24 +1000,47 @@ class Enemy{
     
   }
 
-  //更改动画
-  private changeAnimation(){
-    this.simulateTrackTime = 0;
-    if(this.gameManager.isSimulate) return;
+  //动画状态机发生转换
+  public animationStateTransition(transition: AnimateTransition){
 
-    const animate = this.animateState === "idle"? this.idleAnimate : this.moveAnimate;
-    
-    if(animate){
-      this.skeletonMesh.state.setAnimation(
-        0, 
-        animate, 
-        true
-      );
-    }else{
-      console.error(`${this.key}动画名获取失败！`)
+    //transAnimation: 是否有过渡动画
+    //isWaitTrans: 进行过渡动画时是否停止移动
+    //callback：结束过渡动画后的回调函数
+    const { moveAnimate, idleAnimate, transAnimation, animationScale, isWaitTrans, callback } = transition;
+    const apply = () => {
+      this.moveAnimate = moveAnimate;
+      this.idleAnimate = idleAnimate;
+      this.animationScale = 1;
+      this.changeAnimation();
+      if( callback ) callback();
     }
 
+    if(transAnimation){
+      
+      const animationFind = this.animations.find( animation => animation.name === transAnimation);
+      if(animationFind){
+        if(animationScale) this.animationScale = animationScale;
+        this.moveAnimate = transAnimation;
+        this.idleAnimate = transAnimation;
+        this.countdown.addCountdown({
+          name: isWaitTrans ? "waitAnimationTrans" : "animationTrans",
+          initCountdown: animationFind.duration / this.animationScale, 
+          callback: apply
+        });
+          
+        this.changeAnimation();
+      }else{
+        apply();
+      }
+      
+    }else{
+      apply();
+    }
+  }
 
+  //更改动画
+  public changeAnimation(){
+    this.simulateTrackTime = 0;
   }
 
   public get(){
@@ -880,15 +1055,22 @@ class Enemy{
       inertialVector: this.inertialVector,
       checkPointIndex: this.checkPointIndex,
       faceToward: this.faceToward,
-      targetNode: this.targetNode,
+      nextNode: this.nextNode,
       isStarted: this.isStarted,
       currentSecond: this.currentSecond,
       isFinished: this.isFinished,
+      idleAnimate: this.idleAnimate,
+      moveAnimate: this.moveAnimate,
       animateState: this.animateState,
+      animationScale: this.animationScale,
       shadowHeight: this.shadowHeight,
       exit: this.exit,
       simulateTrackTime: this.simulateTrackTime,
-      motion: this.motion
+      obstacleAvoidanceVector: this.obstacleAvoidanceVector, 
+      obstacleAvoidanceCalCount: this.obstacleAvoidanceCalCount,
+      motion: this.motion,
+      watchers: [...this.watchers],
+      buffs: [...this.buffs]
     }
 
     return state;
@@ -900,16 +1082,22 @@ class Enemy{
       inertialVector,
       checkPointIndex, 
       faceToward,
-      targetNode, 
-      // countDowns,
+      nextNode,
       isStarted, 
       isFinished, 
       animateState,
+      idleAnimate,
+      moveAnimate,
+      animationScale,
       shadowHeight,
       exit,
       currentSecond,
       simulateTrackTime,
-      motion
+      obstacleAvoidanceVector,
+      obstacleAvoidanceCalCount,
+      motion,
+      watchers,
+      buffs
     } = state;
 
     this.setPosition(position.x, position.y);
@@ -917,48 +1105,53 @@ class Enemy{
     this.inertialVector = inertialVector;
     this.checkPointIndex = checkPointIndex;
     this.faceToward = faceToward;
-    this.targetNode = targetNode;
+    this.nextNode = nextNode;
     this.isStarted = isStarted;
     this.exit = exit;
     this.currentSecond = currentSecond;
     this.isFinished = isFinished;
     this.shadowHeight = shadowHeight;
+    this.idleAnimate = idleAnimate;
+    this.moveAnimate = moveAnimate;
     this.animateState = animateState;
+    this.animationScale = animationScale;
     this.simulateTrackTime = simulateTrackTime;
+    this.obstacleAvoidanceVector = obstacleAvoidanceVector;
+    this.obstacleAvoidanceCalCount = obstacleAvoidanceCalCount;
     this.motion = motion;
-    
-    if(this.spine){
+    this.watchers = [...watchers];
+    this.buffs = [...buffs];
+
+    if(this.object){
       //恢复当前动画状态
+
       if(animateState){
         this.changeAnimation();
       }
-      
-      //恢复当前动画帧
-      if(simulateTrackTime && this.skeletonMesh){
-        const track = this.skeletonMesh.state.getCurrent(0);
-        track.trackTime = simulateTrackTime;
+
+      if(simulateTrackTime){
+        this.handleTrackTime(simulateTrackTime);
       }
 
       this.shadow.position.z = this.shadowHeight;
       this.visible()? this.show() : this.hide();
       this.changeFaceToward();
       this.updateShadowHeight();
-    }
 
+      if(!isStarted || isFinished){
+        //如果拖动模拟时间条到未开始或结束，就隐藏路线显示
+        this.options.RoutesVisible = false;
+      }
+
+    }
+    
   }
 
   public destroy(){
     this.route = null;
     this.checkpoints = null;
-    this.targetNode = null;
-    this.gameManager = null;
-    this.skeletonData = null;
-
-    if(this.spine){
-      this.spine?.remove(this.skeletonMesh);
-      this.spine = null;
-    }
-
+    this.nextNode = null;
+    this.object = null;
   }
 
 }

@@ -33,12 +33,23 @@ const AliasMap = {
   predefDirection:{
     0: "UP",
     1: "RIGHT",
-    2: "LEFT",
-    3: "DOWN"
+    2: "DOWN",
+    3: "LEFT",
   },
   actionType:{
     0: "SPAWN",
     6: "ACTIVATE_PREDEFINED"
+  },
+  levelType:{
+    0: "NORMAL",
+    1: "ELITE",
+    2: "BOSS",
+  },
+  applyWay:{
+    0: "NONE",
+    1: "MELEE",
+    2: "RANGED",
+    3: "ALL",
   }
 }
 const AliasHelper = (key, type) => {

@@ -17,6 +17,8 @@ import SPFA from "./SPFA";
 import TrapManager from "./TrapManager";
 import { ElMessage } from 'element-plus'
 import { CountdownManager } from "./CountdownManager";
+import GameBuff from "./GameBuff";
+import Global from "../utilities/Global";
 
 //游戏控制器
 class GameManager{
@@ -24,13 +26,14 @@ class GameManager{
   private clock: THREE.Clock = new THREE.Clock();
 
   public mapModel: MapModel;
+  public gameBuff: GameBuff;
   public SPFA: SPFA;
   public tileManager: TileManager;
   private simulateData: any;
   private isDynamicsSimulate: boolean = false; 
   public maxSecond: number;
   private setData: any;       //等待去设置的模拟数据，需要在某帧的gameloop结束后调用
-  private gameView: GameView;
+  public gameView: GameView;
   public waveManager: WaveManager;
   public trapManager: TrapManager;
   public countdownManager: CountdownManager;
@@ -38,9 +41,10 @@ class GameManager{
   public gameSpeed: number = GameConfig.GAME_SPEED;
   public pause: boolean = false;
   
-  private delta: number;
-  private timeStamp: number = 1 / GameConfig.FPS;
-  private singleFrameTime: number = 1 / GameConfig.FPS; //两次渲染之间间隔的游戏内时间
+  private animateTimeStamp: number = 0;
+  private animateInterval: number = 1 / 60; //两次数据更新之间间隔的时间
+
+  private updateInterval = 1 / GameConfig.FPS;    //游戏内一帧时间（默认三十分之一秒）
 
   public gameSecond: number = 0;    //当前游戏时间
 
@@ -52,21 +56,27 @@ class GameManager{
   private mouseMoveProcessing: boolean = false;
 
   constructor(mapModel: MapModel){
+    Global.reset();
+    Global.changeGameManager(this);
+    this.countdownManager = new CountdownManager();
     //初始化敌人控制类
     this.mapModel = mapModel;
+    this.gameBuff = new GameBuff();
+
     this.SPFA = mapModel.SPFA;
     this.tileManager = mapModel.tileManager;
-    this.countdownManager = new CountdownManager();
+
 
     this.tokenCards = mapModel.tokenCards.map(data =>{
-      const tokenCard = new TokenCard(data, this);
+      const tokenCard = new TokenCard(data);
       return tokenCard;
     });
 
-    this.trapManager = new TrapManager(mapModel.trapDatas, this);
-    this.waveManager = new WaveManager(this);
+    this.trapManager = new TrapManager(mapModel.trapDatas);
+    this.waveManager = new WaveManager();
+    this.gameView = new GameView();
+    this.changeGameSpeed(2);
     
-
     const simData = this.startSimulate();
     this.setSimulateData(simData);
     this.start();
@@ -81,7 +91,7 @@ class GameManager{
       
       eventBus.emit("gameStart")
 
-      this.gameView = new GameView(this);
+      this.gameView.init();
 
       this.handleMouseMove();
       this.handleClick();
@@ -121,18 +131,20 @@ class GameManager{
 
   //循环执行
   private animate(){
-    this.delta = this.clock.getDelta();
-    this.timeStamp += this.delta;
+    this.animateTimeStamp += this.clock.getDelta();
 
-    if(this.timeStamp >= this.singleFrameTime){
+    if(this.animateTimeStamp >= this.animateInterval){
+      this.mouseMoveProcessing = false;
 
-      this.timeStamp = (this.timeStamp % this.singleFrameTime);
+      this.animateTimeStamp = (this.animateTimeStamp % this.animateInterval);
       //游戏循环
-      this.gameLoop();
+      for(let i = 0; i < this.gameSpeed; i++){
+        this.gameLoop();
+      }
+      
     }
 
     requestAnimationFrame(()=>{
-      this.mouseMoveProcessing = false;
       this.animate();
     });
 
@@ -140,10 +152,8 @@ class GameManager{
   }
 
   public gameLoop(){
-    let delta = 0;
-
     if(!this.pause && !this.isFinished){
-      delta = this.singleFrameTime * this.gameSpeed;
+      const delta = this.updateInterval;
 
       //动态模拟
       if(!this.isSimulate && this.isDynamicsSimulate){
@@ -162,29 +172,21 @@ class GameManager{
       }
       
       this.gameSecond += delta;
+      
       this.update(delta);
-
+      this.gameView.update(delta);
+      
       if(!this.isSimulate ) eventBus.emit("second_change", this.gameSecond);
-      
-      
+
     }
 
     if(!this.isSimulate) eventBus.emit("update:isFinished", this.isFinished);
-
-    this.render(delta);
 
   }
 
   private update(delta: number){
     this.countdownManager.update(delta);
     this.waveManager.update(delta);
-  }
-
-  private render(delta: number){
-    if(!this.isSimulate ){
-      this.gameView.render(delta);
-    }
-    
   }
 
   private intersectObjects(x: number, y: number): any{
@@ -235,7 +237,7 @@ class GameManager{
       this.tileManager.hiddenPreviewTextures();
       
       const find = this.intersectObjects(event.offsetX, event.offsetY);
-
+      
       if(find){
         switch (find.constructor) {
           case Trap:
@@ -389,7 +391,8 @@ class GameManager{
       trapState: this.trapManager.get(),
       tileState: this.tileManager.get(),
       eManagerState: this.waveManager.get(),
-      countdownState: this.countdownManager.get()
+      countdownState: this.countdownManager.get(),
+      tokenCardState: this.tokenCards.map(tc => tc.get())
     }
     return state;
   }
@@ -397,14 +400,17 @@ class GameManager{
   public set(state){
     this.trapManager.resetSelected();
 
-    const {gameSecond, isFinished, SPFAState, trapState, tileState, eManagerState, countdownState} = state;
+    const {gameSecond, isFinished, SPFAState, trapState, tileState, eManagerState, countdownState, tokenCardState} = state;
     
     this.gameSecond = gameSecond;
     this.trapManager.set(trapState);
     this.tileManager.set(tileState);
     this.SPFA.set(SPFAState);
-    
-    if(this.gameView){
+    this.tokenCards.forEach((tc, index) => {
+      tc.set(tokenCardState[index]);
+    })
+
+    if(this.gameView.mapContainer){
       const trapObjects = this.gameView.trapObjects;
       while (trapObjects.children.length > 0) {
         let child = trapObjects.children[0];
@@ -431,6 +437,7 @@ class GameManager{
 
     if(this.isFinished || this.pause){
       this.set(this.setData);
+      this.gameView.renderEnemy(0);   //让敌人spine渲染set的动画时间 
     }
 
   }
@@ -440,9 +447,9 @@ class GameManager{
     //模拟环境禁用console.log
     const cacheFunc = console.log;
     
-    // console.log = ()=>{
-    //   return;
-    // }
+    console.log = ()=>{
+      return;
+    }
 
     this.isSimulate = true;
     const simData = {
@@ -454,7 +461,6 @@ class GameManager{
       simData.byAction.push(this.get());
     };
     eventBus.on("action_index_change", fuc);
-
     let time = startTime? startTime : 0;
     const cachePause = this.pause;
     this.pause = false;
@@ -465,6 +471,7 @@ class GameManager{
       }
       this.gameLoop();
     }
+
     this.pause = cachePause;
     this.maxSecond = simData.byTime.length - 1 + (startTime? startTime : 0);
 
@@ -483,9 +490,13 @@ class GameManager{
     const currentState = this.get();
     const startTime = Math.ceil(this.gameSecond);
     const simData = this.startSimulate(startTime);
+    // console.log(this.simulateData)
+    const prevStatesByTime =  this.simulateData.byTime.slice(0, startTime);
 
-    const prevStates =  this.simulateData.byTime.slice(0, startTime);
-    this.simulateData.byTime = [...prevStates, ...simData.byTime];
+    this.simulateData.byTime = [...prevStatesByTime, ...simData.byTime];
+
+    const replaceLength = simData.byAction.length;
+    this.simulateData.byAction.splice(-replaceLength, replaceLength, ...simData.byAction);
 
     const findIndex = this.simulateData.byFrame.findIndex(simData => {
       return simData.gameSecond >= currentState.gameSecond;
@@ -501,6 +512,10 @@ class GameManager{
     this.set(currentState);
 
     this.isDynamicsSimulate = true;
+
+    this.waveManager.actions.flat().forEach((action, index) => {
+      action.actionTime = parseFloat(this.simulateData.byAction[index]?.gameSecond?.toFixed(1));
+    })
   }
 
   public destroy(){
