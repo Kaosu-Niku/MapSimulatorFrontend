@@ -1,8 +1,12 @@
 <template>
   <div class="character-card">
     <div class="content">
-      <el-image class="head-image" :src="iconUrl" fit="fill"
-      @click="join" />
+      <div class="head-rarity">
+        <el-image class="head-image" :src="iconUrl" fit="fill" @click="join" /> 
+        <div class="rarity">
+          <StarFilled class="rarity-image" v-for="n in characterCurrent.rarity" :key="n"/>        
+        </div>
+      </div>      
       <div class="name_profession">
         <div class="name">
           {{ characterCurrent.name? characterCurrent.name : "無" }}
@@ -10,11 +14,7 @@
         <div class="profession">
           {{ characterCurrent.profession? professionConvertChinese(characterCurrent.profession) : "無" }}
         </div>
-      </div>      
-      <div class="rarity">
-        <el-image class="rarity-image" v-for="n in characterCurrent.rarity" :key="n"
-        :src="'https://www.citypng.com/public/uploads/preview/white-star-png-img-701751694532296t4i955smo5.png'" fit="fill"/>        
-      </div>
+      </div>           
       <div class="phase_skill">
         <div class="maxPhase">
           <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_0_large.png'" fit="fill"
@@ -36,6 +36,7 @@
 
 <script lang="ts" setup>
 import { ref, watch, defineProps, computed } from "vue";
+import { StarFilled } from '@element-plus/icons-vue'; //StarFilled = 星星圖案
 import GameConfig from "@/components/utilities/GameConfig"; 
 const props = defineProps({
   character: {
@@ -144,6 +145,13 @@ function join(){
     align-items: center;
     margin-left: 6px;
     cursor: pointer;
+    .head-rarity{
+      flex: 2;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
     .head-image{
       height: 50px;
       width: 50px;
@@ -153,16 +161,16 @@ function join(){
       flex: 2;
       display: flex;
       flex-direction: column;
-      justify-content: flex-start;
+      justify-content: center;
       align-items: center;
       gap: 8px;
     }
     .rarity{
       flex: 1;
       display: flex; 
-      flex-direction: column;
       flex-wrap: wrap;
-      justify-content: space-between;
+      justify-content: center;
+      align-items: center;
       .rarity-image{
         margin-top: 1px;
         margin-bottom: 1px;
@@ -174,7 +182,7 @@ function join(){
       flex: 3;
       display: flex;
       flex-direction: column;
-      justify-content: flex-start;
+      justify-content: center;
       align-items: center;
       gap: 5px;
     }
@@ -182,6 +190,7 @@ function join(){
       display: flex; 
       flex-wrap: wrap;
       justify-content: space-between;
+      align-items: center;
       .elite-image{    
         margin-right: 5px;  
         height: 30px;
@@ -192,6 +201,7 @@ function join(){
       display: flex; 
       flex-wrap: wrap;
       justify-content: space-between;
+      align-items: center;
       .skill-image{     
         margin-right: 5px;  
         height: 30px;
