@@ -56,14 +56,14 @@ onMounted(async () => {
     const res2: any = await getCharacterData(characterRefs);
     const characterDatas = res2.data.CharacterDatas;console.log('全角色資料',characterDatas);
 
-    const CharacterGroup = characterDatas.map((character) => {
+    const CharacterGroup = characterDatas
+    .slice(250, 260)
+    .map((character) => {
       return {
         //id
         key: character.key,
         //名稱
         name: character.name, 
-        //角色頭像
-        icon: "https://media.prts.wiki/9/94/%E5%A4%B4%E5%83%8F_%E5%AE%89%E8%B5%9B%E5%B0%94.png",
         //角色排序 
         sortIndex: character.sortIndex, 
         //角色星級
@@ -82,12 +82,6 @@ onMounted(async () => {
         talents: character.talents,
         //角色潛能資訊
         potentialRanks: character.potentialRanks,
-
-        skillData: { //技能相關資訊
-          icon: [
-            "https://media.prts.wiki/thumb/6/60/%E6%8A%80%E8%83%BD_%E6%B2%BB%E7%96%97%E8%8C%83%E5%9B%B4%E5%BC%BA%E5%8C%96.png/50px-%E6%8A%80%E8%83%BD_%E6%B2%BB%E7%96%97%E8%8C%83%E5%9B%B4%E5%BC%BA%E5%8C%96.png"
-          ],
-        }, 
       }
     });
 
@@ -105,5 +99,6 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   overflow-y: scroll;
+  overflow-x: hidden;
 }
 </style>

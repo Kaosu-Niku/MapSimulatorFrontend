@@ -1,37 +1,42 @@
 <template>
   <div class="character-card">
     <div class="content">
-      <el-image class="head-image" :src="characterCurrent.icon" fit="fill"
+      <el-image class="head-image" :src="iconUrl" fit="fill"
       @click="join" />
-      <div class="name">
-        {{ characterCurrent.name? characterCurrent.name : "無" }}
-      </div>
-      <div class="profession">
-        {{ characterCurrent.profession? characterCurrent.profession : "無" }}
-      </div>
+      <div class="name_profession">
+        <div class="name">
+          {{ characterCurrent.name? characterCurrent.name : "無" }}
+        </div>
+        <div class="profession">
+          {{ characterCurrent.profession? professionConvertChinese(characterCurrent.profession) : "無" }}
+        </div>
+      </div>      
       <div class="rarity">
         <el-image class="rarity-image" v-for="n in characterCurrent.rarity" :key="n"
         :src="'https://www.citypng.com/public/uploads/preview/white-star-png-img-701751694532296t4i955smo5.png'" fit="fill"/>        
       </div>
-      <div class="maxPhase">
-        <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_0_large.png'" fit="fill"
-        @click="change_currentPhase(0)" />
-        <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_1_large.png'" fit="fill" 
-        @click="change_currentPhase(1)" v-if="characterCurrent.maxPhase > 0"/>
-        <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_2_large.png'" fit="fill" 
-        @click="change_currentPhase(2)" v-if="characterCurrent.maxPhase > 1"/>
-      </div>
-      <div class="skillData">
-        <el-image class="skill-image" v-for="n in characterCurrent.skillData.icon" :key="n" :src="n" fit="fill"
-        @click="change_currentSkill(n)"/>        
-      </div>
+      <div class="phase_skill">
+        <div class="maxPhase">
+          <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_0_large.png'" fit="fill"
+          @click="change_currentPhase(0)" />
+          <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_1_large.png'" fit="fill" 
+          @click="change_currentPhase(1)" v-if="characterCurrent.maxPhase > 0"/>
+          <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_2_large.png'" fit="fill" 
+          @click="change_currentPhase(2)" v-if="characterCurrent.maxPhase > 1"/>
+        </div>
+        <div class="skillData">
+          <el-image class="skill-image" v-for="skill in characterCurrent.skills" :key="skill.skillId" :src="skillIconUrl(skill.skillId)" fit="fill"
+          @click="change_currentSkill(skill.skillId)"/>        
+        </div>
+      </div>     
     </div>
   </div>
   
 </template>
 
 <script lang="ts" setup>
-import { ref, watch, defineProps } from "vue";
+import { ref, watch, defineProps, computed } from "vue";
+import GameConfig from "@/components/utilities/GameConfig"; 
 const props = defineProps({
   character: {
     type: Object,
@@ -43,6 +48,46 @@ const props = defineProps({
 const originalCharacterData = JSON.parse(JSON.stringify(props.character));
 const characterCurrent = ref(originalCharacterData);
 characterCurrent.value.currentPhase = 0;
+
+//請求角色頭像圖片
+const iconUrl = computed(() => {
+  //GameConfig.BASE_URL = VITE_API_URL (VITE_API_URL是設定後端網址的環境變數)
+  //角色頭像的圖檔取自一個提供遊戲原資源解包的Github倉庫: https://github.com/yuanyan3060/ArknightsGameResource/public/avatar/
+  //圖檔名稱剛好是角色id，副檔名是png，例如: 陳的精零頭像是 char_010_chen.png、陳的精二頭像是 char_010_chen_2.png 以此類推
+  return `${GameConfig.BASE_URL}/avatar/${characterCurrent.value.key}.png`;
+});
+
+//將profession轉換為中文表示
+function professionConvertChinese(profession){
+  switch(profession){
+    case "PIONEER":
+      return "先锋";
+    case "WARRIOR":
+      return "近卫";
+    case "SNIPER":
+      return "狙击";
+    case "TANK":
+      return "重装";
+    case "MEDIC":
+      return "医疗";
+    case "SUPPORT":
+      return "辅助";
+    case "CASTER":
+      return "术师";
+    case "SPECIAL":
+      return "特种";
+    default:
+      return "其它";
+  }
+}
+
+//請求角色技能圖片
+function skillIconUrl (skillId){
+  //GameConfig.BASE_URL = VITE_API_URL (VITE_API_URL是設定後端網址的環境變數)
+  //角色技能的圖檔取自一個提供遊戲原資源解包的Github倉庫: https://github.com/yuanyan3060/ArknightsGameResource/public/skill/
+  //圖檔名稱是 skill_icon_(角色技能id)，副檔名是png，例如: 陳的1技能是 skill_icon_skchr_chen_1.png、陳的2技能是 skill_icon_skchr_chen_2.png 以此類推
+  return `${GameConfig.BASE_URL}/skill/skill_icon_${skillId}.png`;
+};
 
 function change_currentPhase(i){
   const originalSkillData = JSON.parse(JSON.stringify(props.character.skillData));
@@ -71,6 +116,7 @@ function join(){
 <style lang="scss" scoped>
 .character-card{
   display: flex;
+  justify-content: center;
   align-items: center;
   height: 100px;
   width: 100%;
@@ -94,7 +140,7 @@ function join(){
   .content{       
     flex: 1;   
     display: flex;
-    justify-content: flex-start;
+    justify-content: center;
     align-items: center;
     margin-left: 6px;
     cursor: pointer;
@@ -103,11 +149,13 @@ function join(){
       width: 50px;
       margin-right: 6px;
     }
-    .name{
-      flex: 1;
-    }
-    .profession{
-      flex: 1;
+    .name_profession{
+      flex: 2;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+      gap: 8px;
     }
     .rarity{
       flex: 1;
@@ -122,30 +170,32 @@ function join(){
         width: 12px;
       }
     }
-    .maxPhase{
-      flex: 1;
-      display: flex; 
+    .phase_skill{
+      flex: 3;
+      display: flex;
       flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+      gap: 5px;
+    }
+    .maxPhase{
+      display: flex; 
       flex-wrap: wrap;
       justify-content: space-between;
       .elite-image{    
-        margin-top: 2px;
-        margin-bottom: 2px;    
-        height: 25px;
-        width: 25px;
+        margin-right: 5px;  
+        height: 30px;
+        width: 30px;
       }
     }  
     .skillData{
-      flex: 1;
       display: flex; 
-      flex-direction: column;
       flex-wrap: wrap;
       justify-content: space-between;
       .skill-image{     
-        margin-top: 2px;
-        margin-bottom: 2px;   
-        height: 25px;
-        width: 25px;
+        margin-right: 5px;  
+        height: 30px;
+        width: 30px;
       }
     } 
 
