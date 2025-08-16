@@ -52,6 +52,8 @@ class MapModel{
     await this.getTokenCards();
     //获取trap数据
     await this.getTrapDatas();
+    //獲取已選取的角色
+    await this.getCharacterCards();
     
     //解析敌人路径
     this.routes = this.parseEnemyRoutes(this.sourceData.routes);
@@ -124,6 +126,8 @@ class MapModel{
 
   }
 
+  private urls = [];
+
   private async getTokenCards(){
 
     const tokenCards = this.sourceData.predefines?.tokenCards;
@@ -148,25 +152,85 @@ class MapModel{
       const keys = this.tokenCards.map(tokenCard => tokenCard.characterKey);
       const res = await getTokenCards(keys);
       
-      const urls = [];
+
       res.data?.forEach(item => {
         const find = this.tokenCards.find(tokenCard => tokenCard.characterKey === item.name);
         if(find){
           find.url = `${GameConfig.BASE_URL}trap/image/${item.image}.png`;
-          urls.push(find.url);
+          this.urls.push(find.url);
         }
       })
-
-      if(urls.length > 0){
-        assetsManager.loadTexture(urls).then((res: THREE.Texture[]) => {
-          for(let i = 0; i < this.tokenCards.length; i++){
-            this.tokenCards[i].texture = res[i];
-          }
-        })
-      }
     }
     
   }
+
+  private async getCharacterCards(){
+
+    const characterCards = this.sourceData.predefines?.characterCards;
+    if(characterCards){
+      const nowTokenCardsLength = this.tokenCards.length;
+      characterCards.forEach(characterCard => {
+        this.urls.push(characterCard.icon);
+        //計算部屬費用        
+        //基礎部屬費用
+        //array.at(-1) 相當於 array[array.length - 1]
+        let defaultCost = characterCard.phases[characterCard.currentPhase].attributesKeyFrames.at(-1).data.cost; //value是正數               
+        //費用潛能
+        let potentialCost = 0;
+        characterCard.potentialRanks.forEach((item, index) => {
+          if(item.buff != null){
+            item.buff.attributes.attributeModifiers.forEach((item2, index) => {
+              if(item2.attributeType = "COST"){
+                potentialCost += item2.value; //value是負數
+              }
+            });
+          }          
+        });
+        //減費用的天賦 (先不計算)
+        const finalCost = defaultCost + potentialCost;
+
+        //計算再部屬時間      
+        //基礎再部屬時間  
+        //array.at(-1) 相當於 array[array.length - 1]
+        let defaultRespawnTime = characterCard.phases[characterCard.currentPhase].attributesKeyFrames.at(-1).data.respawnTime; //value是正數               
+        //再部屬潛能
+        let potentialRespawnTime = 0;
+        characterCard.potentialRanks.forEach((item, index) => {
+          if(item.buff != null){
+            item.buff.attributes.attributeModifiers.forEach((item2, index) => {
+              if(item2.attributeType = "RESPAWN_TIME"){
+                potentialRespawnTime += item2.value; //value是負數
+              }
+            });
+          }             
+        });
+        //減再部屬時間的天賦 (先不計算)
+        const finalRespawnTime = defaultRespawnTime + potentialRespawnTime;
+
+        this.tokenCards.push({
+          characterKey: characterCard.key, //id
+          initialCnt: 1, //數量
+          hidden: false, //?
+          alias: null, //?   
+          level: 1, //級別
+          mainSkillLvl: 1, //?
+          cost: finalCost, //部屬費用
+          respawntime: finalRespawnTime //再部屬時間
+        });
+      })
+    }    
+
+    //獲取目前所有部屬區卡片的圖片
+    if(this.urls.length > 0){
+      assetsManager.loadTexture(this.urls).then((res: THREE.Texture[]) => {
+        for(let i = 0; i < this.tokenCards.length; i++){
+          this.tokenCards[i].texture = res[i];
+        }
+      })
+    }
+  }
+
+  
 
   private async getTrapDatas(){
     const tokenInsts = this.sourceData.predefines?.tokenInsts;

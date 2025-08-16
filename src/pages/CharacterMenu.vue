@@ -25,7 +25,7 @@
         </el-button>       
       </div>  
       
-      <CharacterSelect />
+      <CharacterSelect @chooseCharacter = "handleChooseCharacter"/>
     </div>
 
     </transition>
@@ -36,9 +36,15 @@
 import { ref } from "vue";
 import CharacterSelect from "./CharacterSelect.vue"
 
-// const emit = defineEmits<{
-//   (e: 'changeStage', map: any): void
-// }>()
+//指定可以接收的子元件emit回傳
+const emit = defineEmits<{
+  (e: 'chooseCharacter', character: any): void
+}>()
+
+//CharacterSelect元件觸發chooseCharacter的emit回傳時執行
+const handleChooseCharacter = (character: any) => {
+  emit("chooseCharacter", character);
+}
 
 const characterMenuShow = ref(true);
 </script>

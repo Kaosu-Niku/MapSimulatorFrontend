@@ -2,7 +2,7 @@
   <div class="character-wave">
     <div class="content">
       <div class="head-rarity">
-        <el-image class="head-image" :src="iconUrl" fit="fill" @click="join" /> 
+        <el-image class="head-image" :src="characterCurrent.icon" fit="fill" @click="join" /> 
         <div class="rarity">
           <StarFilled class="rarity-image" v-for="n in characterCurrent.rarity" :key="n"/>        
         </div>
@@ -42,12 +42,17 @@
 import { ref, watch, defineProps, computed } from "vue";
 import { StarFilled } from '@element-plus/icons-vue'; //StarFilled = 星星圖案
 import GameConfig from "@/components/utilities/GameConfig"; 
+
 const props = defineProps({
   character: {
     type: Object,
     required: true
   }
 });
+
+const emit = defineEmits<{
+  (e: 'chooseCharacter', character: any): void
+}>()
 
 const characterCurrent = ref({ ...props.character });
 //設置角色當前選擇的精英階段和當前選擇的技能id，用於與Wave互動
@@ -63,14 +68,6 @@ watch(() => characterCurrent.value.skills, (newSkills) => {
 if(characterCurrent.value.skills.length > 0){
   characterCurrent.value.currentSkillId = characterCurrent.value.skills[characterCurrent.value.skills.length - 1].skillId;
 }
-
-//請求角色頭像圖片
-const iconUrl = computed(() => {
-  //GameConfig.BASE_URL = VITE_API_URL (VITE_API_URL是設定後端網址的環境變數)
-  //角色頭像的圖檔取自一個提供遊戲原資源解包的Github倉庫: https://github.com/yuanyan3060/ArknightsGameResource/public/avatar/
-  //圖檔名稱剛好是角色id，副檔名是png，例如: 陳的精零頭像是 char_010_chen.png、陳的精二頭像是 char_010_chen_2.png 以此類推
-  return `${GameConfig.BASE_URL}/avatar/${characterCurrent.value.key}.png`;
-});
 
 //將profession轉換為中文表示
 function professionConvertChinese(profession){
@@ -107,6 +104,11 @@ function skillIconUrl (skillId){
 function change_currentPhase(i){
   //改變當前選擇的精英階段
   characterCurrent.value.currentPhase = i;
+  //如果當前選擇的精英階段不是精2，且選擇3技能，就將所選技能替換成1技能 (遊戲中未精2就沒有3技能)
+  let currentSkillIndex = characterCurrent.value.skills.findIndex(skill => skill.skillId === characterCurrent.value.currentSkillId);
+  if(i != 2 && currentSkillIndex == 2){
+    characterCurrent.value.currentSkillId = characterCurrent.value.skills[0].skillId;
+  }
 }
 
 function change_currentSkill(skillId){
@@ -121,7 +123,7 @@ function change_currentSkill(skillId){
 
 function join(){
   //頭像圖片被點擊的角色加入部屬區
-  alert(characterCurrent);
+  emit("chooseCharacter", { ...characterCurrent.value });
 }
 
 </script>

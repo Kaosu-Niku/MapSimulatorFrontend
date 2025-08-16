@@ -4,9 +4,17 @@ import Menu from '@/pages/Menu.vue';
 import Game from "@/pages/Game.vue";
 import CharacterMenu from '@/pages/CharacterMenu.vue';
 
+
+
 const game = ref();
 const handleChangeStage = (map: any) => {
+  map.predefines.characterCards = chooseCharacters;console.log('index.vue mapData', map);
   game.value.newGame(map);
+}
+
+const chooseCharacters = [];
+const handleChooseCharacter = (character: any) => {
+  chooseCharacters.push(character);
 }
 
 </script>
@@ -17,7 +25,7 @@ const handleChangeStage = (map: any) => {
   <Game 
     ref="game"
   />
-  <CharacterMenu />
+  <CharacterMenu @chooseCharacter = "handleChooseCharacter"/>
 </div>
   
 </template>
