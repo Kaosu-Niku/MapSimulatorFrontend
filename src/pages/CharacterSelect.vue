@@ -1,6 +1,6 @@
 <template>
   <div class="character-menu">
-    <CharacterCard 
+    <CharacterWave 
       v-for="(character) in characters"
       :character=character
     />
@@ -11,7 +11,7 @@
 <script lang="ts" setup>
 import request from "../api/request"
 import { ref, watch, onMounted } from "vue";
-import CharacterCard from "./CharacterCard.vue"
+import CharacterWave from "./CharacterWave.vue"
 
 interface CharacterRef{
   key: string, //請求的角色Id
@@ -57,7 +57,6 @@ onMounted(async () => {
     const characterDatas = res2.data.CharacterDatas;console.log('全角色資料',characterDatas);
 
     const CharacterGroup = characterDatas
-    .slice(250, 260)
     .map((character) => {
       return {
         //id
@@ -73,7 +72,7 @@ onMounted(async () => {
         //角色分支
         subProfessionId: character.subProfessionId,
         //角色最大精英階段
-        maxPhase: character.phases.length, //取phases的陣列長度，即可得知角色最大精英階段
+        maxPhase: character.phases.length - 1, //取phases的陣列長度-1，即可得知角色最大精英階段
         //角色各精英階級資訊
         phases: character.phases,
         //角色各技能資訊
@@ -83,7 +82,11 @@ onMounted(async () => {
         //角色潛能資訊
         potentialRanks: character.potentialRanks,
       }
-    });
+    })
+    //排序
+    // .sort((a, b) => {
+    //   return a.sortIndex - b.sortIndex;
+    // });
 
     characters.value = CharacterGroup;
   }

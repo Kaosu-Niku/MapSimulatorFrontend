@@ -1,5 +1,5 @@
 <template>
-  <div class="character-card">
+  <div class="character-wave">
     <div class="content">
       <div class="head-rarity">
         <el-image class="head-image" :src="iconUrl" fit="fill" @click="join" /> 
@@ -18,14 +18,18 @@
       <div class="phase_skill">
         <div class="maxPhase">
           <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_0_large.png'" fit="fill"
+          :class="{ 'is-active': characterCurrent.currentPhase === 0 }"
           @click="change_currentPhase(0)" />
-          <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_1_large.png'" fit="fill" 
+          <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_1_large.png'" fit="fill"
+          :class="{ 'is-active': characterCurrent.currentPhase === 1 }" 
           @click="change_currentPhase(1)" v-if="characterCurrent.maxPhase > 0"/>
-          <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_2_large.png'" fit="fill" 
+          <el-image class="elite-image" :src="'https://map.ark-nights.com/assets/elite_icons/elite_2_large.png'" fit="fill"
+          :class="{ 'is-active': characterCurrent.currentPhase === 2 }" 
           @click="change_currentPhase(2)" v-if="characterCurrent.maxPhase > 1"/>
         </div>
         <div class="skillData">
           <el-image class="skill-image" v-for="skill in characterCurrent.skills" :key="skill.skillId" :src="skillIconUrl(skill.skillId)" fit="fill"
+          :class="{ 'is-active': characterCurrent.currentSkillId === skill.skillId }"
           @click="change_currentSkill(skill.skillId)"/>        
         </div>
       </div>     
@@ -45,10 +49,20 @@ const props = defineProps({
   }
 });
 
-//使用深層複製來避免引用原數據而導致同步修改 (需注意此深層複製方式無法複製undefined、function())
-const originalCharacterData = JSON.parse(JSON.stringify(props.character));
-const characterCurrent = ref(originalCharacterData);
-characterCurrent.value.currentPhase = 0;
+const characterCurrent = ref({ ...props.character });
+//設置角色當前選擇的精英階段和當前選擇的技能id，用於與Wave互動
+characterCurrent.value.currentPhase = characterCurrent.value.maxPhase;
+
+watch(() => characterCurrent.value.skills, (newSkills) => {
+  //由於vue的渲染機制問題，直接對characterCurrent.value.currentSkillId賦值，可能要晚於skill-image渲染並要帶入判斷的時機，以至於只會取得undefind判斷永遠都是false的狀況
+  //因此改為用watch監聽的方式來確保賦值
+  if (newSkills && newSkills.length > 0) {
+    characterCurrent.value.currentSkillId = newSkills?.[0].skillId;
+  }
+}, { immediate: true });
+if(characterCurrent.value.skills.length > 0){
+  characterCurrent.value.currentSkillId = characterCurrent.value.skills[characterCurrent.value.skills.length - 1].skillId;
+}
 
 //請求角色頭像圖片
 const iconUrl = computed(() => {
@@ -91,34 +105,33 @@ function skillIconUrl (skillId){
 };
 
 function change_currentPhase(i){
-  const originalSkillData = JSON.parse(JSON.stringify(props.character.skillData));
-  //改變所選精英階段
+  //改變當前選擇的精英階段
   characterCurrent.value.currentPhase = i;
-  //(改變攻擊範圍、改變可選技能)
-  characterCurrent.value.skillData = JSON.parse(JSON.stringify(originalSkillData));
-  //如果這是有三技能的幹員，且當前所選精英階段不是精2，就移除最後一個技能的資訊
-  if(characterCurrent.value.skillData.icon.length == 3 && i != 2){
-    characterCurrent.value.skillData.icon.pop();
-  } 
 }
 
-function change_currentSkill(i){
+function change_currentSkill(skillId){
   //改變所選技能
-  
+  characterCurrent.value.currentSkillId = skillId;
+  //如果當前選擇的精英階段不是精2，且選擇3技能，就將所選技能替換成1技能 (遊戲中未精2就沒有3技能)
+  let currentSkillIndex = characterCurrent.value.skills.findIndex(skill => skill.skillId === skillId);
+  if(characterCurrent.value.currentPhase != 2 && currentSkillIndex == 2){
+    characterCurrent.value.currentSkillId = characterCurrent.value.skills[0].skillId;
+  }
 }
 
 function join(){
-  //頭像被點擊的幹員加入部屬區
+  //頭像圖片被點擊的角色加入部屬區
   alert(characterCurrent);
 }
 
 </script>
 
 <style lang="scss" scoped>
-.character-card{
+.character-wave{
   display: flex;
   justify-content: center;
   align-items: center;
+  flex-shrink: 0; //可防止因為有太多item而被壓縮空間
   height: 100px;
   width: 100%;
   margin-bottom: 6px;
@@ -174,8 +187,7 @@ function join(){
       .rarity-image{
         margin-top: 1px;
         margin-bottom: 1px;
-        height: 12px;
-        width: 12px;
+        width: 15px;
       }
     }
     .phase_skill{
@@ -193,8 +205,12 @@ function join(){
       align-items: center;
       .elite-image{    
         margin-right: 5px;  
-        height: 30px;
         width: 30px;
+      }
+      .elite-image.is-active {
+        padding: 1px;
+        box-shadow: 0 0 10px yellow;
+        filter: brightness(2); //稍微提高亮度
       }
     }  
     .skillData{
@@ -206,6 +222,10 @@ function join(){
         margin-right: 5px;  
         height: 30px;
         width: 30px;
+      }
+      .skill-image.is-active {
+        padding: 1px;
+        box-shadow: 0 0 10px yellow;
       }
     } 
 
