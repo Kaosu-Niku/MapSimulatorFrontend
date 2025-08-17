@@ -41,7 +41,6 @@ watch(() => tokenCards, () => {
       cnt: tc.cnt,
       respawnTime: -1
     }
-
     return obj;
   })
 

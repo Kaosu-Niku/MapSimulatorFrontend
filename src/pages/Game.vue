@@ -144,7 +144,7 @@ const newGame = async (map) => {
   reset();
   gameSpeed.value = GameConfig.GAME_SPEED;
 
-  gameManager = new GameManager(mapModel);
+  gameManager = new GameManager(mapModel);console.log('Game.vue gameManager',gameManager);
 
   gameManagerRef.value = gameManager;
   maxEnemyCount.value = gameManager.waveManager.maxEnemyCount;

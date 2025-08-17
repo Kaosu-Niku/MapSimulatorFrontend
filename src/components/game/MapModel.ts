@@ -49,10 +49,10 @@ class MapModel{
     
     //获取可使用的装置图标
     await this.getTokenCards();
-    //获取trap数据
-    await this.getTrapDatas();
     //獲取已選取的角色
     await this.getCharacterCards();
+    //获取trap数据
+    await this.getTrapDatas();    
     
     //解析敌人路径
     this.routes = this.parseEnemyRoutes(this.sourceData.routes);
@@ -165,18 +165,17 @@ class MapModel{
     const characterCards = this.sourceData.predefines?.characterCards;
     if(characterCards){
       const nowTokenCardsLength = this.tokenCards.length;
-      characterCards.forEach(characterCard => {
-        this.urls.push(characterCard.icon);
+      characterCards.forEach(characterCard => {        
         //計算部屬費用        
         //基礎部屬費用
         //array.at(-1) 相當於 array[array.length - 1]
-        let defaultCost = characterCard.phases[characterCard.currentPhase].attributesKeyFrames.at(-1).data.cost; //value是正數               
+        let defaultCost = characterCard.phases[characterCard.currentPhase].attributesKeyFrames.at(-1).data.cost; //value是正數          
         //費用潛能
         let potentialCost = 0;
         characterCard.potentialRanks.forEach((item, index) => {
           if(item.buff != null){
             item.buff.attributes.attributeModifiers.forEach((item2, index) => {
-              if(item2.attributeType = "COST"){
+              if(item2.attributeType == "COST"){
                 potentialCost += item2.value; //value是負數
               }
             });
@@ -188,13 +187,13 @@ class MapModel{
         //計算再部屬時間      
         //基礎再部屬時間  
         //array.at(-1) 相當於 array[array.length - 1]
-        let defaultRespawnTime = characterCard.phases[characterCard.currentPhase].attributesKeyFrames.at(-1).data.respawnTime; //value是正數               
+        let defaultRespawnTime = characterCard.phases[characterCard.currentPhase].attributesKeyFrames.at(-1).data.respawnTime; //value是正數             
         //再部屬潛能
         let potentialRespawnTime = 0;
         characterCard.potentialRanks.forEach((item, index) => {
           if(item.buff != null){
             item.buff.attributes.attributeModifiers.forEach((item2, index) => {
-              if(item2.attributeType = "RESPAWN_TIME"){
+              if(item2.attributeType == "RESPAWN_TIME"){
                 potentialRespawnTime += item2.value; //value是負數
               }
             });
@@ -211,8 +210,11 @@ class MapModel{
           level: 1, //級別
           mainSkillLvl: 1, //?
           cost: finalCost, //部屬費用
-          respawntime: finalRespawnTime //再部屬時間
+          respawntime: finalRespawnTime, //再部屬時間
+          url: characterCard.icon, //頭像圖片
         });
+
+        this.urls.push(characterCard.icon);
       })
     }    
 
@@ -225,8 +227,6 @@ class MapModel{
       })
     }
   }
-
-  
 
   private async getTrapDatas(){
     const tokenInsts = this.sourceData.predefines?.tokenInsts;

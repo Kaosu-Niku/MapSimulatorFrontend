@@ -8,7 +8,7 @@ import CharacterMenu from '@/pages/CharacterMenu.vue';
 
 const game = ref();
 const handleChangeStage = (map: any) => {
-  map.predefines.characterCards = chooseCharacters;console.log('index.vue mapData', map);
+  map.predefines.characterCards = chooseCharacters;
   game.value.newGame(map);
 }
 
